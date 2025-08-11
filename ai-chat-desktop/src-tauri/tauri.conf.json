@@ -2,7 +2,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devPath": "http://localhost:9001",
+    "devPath": "http://localhost:8080",
     "distDir": "../dist"
   },
   "package": {
@@ -11,16 +11,12 @@
   },
   "tauri": {
     "allowlist": {
-      "all": false,
-      "shell": {
-        "all": false,
-        "open": true
-      }
+      "all": false
     },
     "bundle": {
       "active": true,
       "targets": "all",
-      "identifier": "com.tauri.dev"
+      "identifier": "com.trustagent.aichat"
     },
     "security": {
       "csp": null

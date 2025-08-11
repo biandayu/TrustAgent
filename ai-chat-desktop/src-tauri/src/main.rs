@@ -11,17 +11,19 @@ use std::sync::Mutex;
 
 #[tauri::command]
 async fn send_message_to_openai(message: String, state: State<'_, AppState>) -> Result<String, String> {
-    let store = state.store.lock().unwrap();
-    let api_key = match store.get("api_key") {
-        Some(key) => key.as_str().unwrap().to_string(),
-        None => return Err("API key not found".to_string()),
+    let api_key = {
+        let store = state.store.lock().unwrap();
+        match store.get("api_key") {
+            Some(key) => key.as_str().unwrap().to_string(),
+            None => return Err("API key not found".to_string()),
+        }
     };
 
     let config = OpenAIConfig::new().with_api_key(api_key);
     let client = Client::with_config(config);
 
     let request = CreateChatCompletionRequestArgs::default()
-        .model("gpt-3.5-turbo")
+        .model("gpt-5-chat-latest")
         .messages([
             ChatCompletionRequestSystemMessageArgs::default()
                 .content("You are a helpful assistant.")
