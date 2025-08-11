@@ -3,17 +3,26 @@ import { invoke } from "@tauri-apps/api/tauri";
 import SmartContentRenderer from "./components/SmartContentRenderer";
 import "./App.css";
 
+interface ChatMessage {
+  id: number;
+  text: string;
+  sender: "user" | "bot";
+  timestamp?: number;
+}
+
 function App() {
-  const [messages, setMessages] = useState([
+  const [messages, setMessages] = useState<ChatMessage[]>([
     { 
       id: 1, 
-      text: "🎉 Welcome to AI Chat Desktop!\n\n✨ **New Features:**\n- 🌙 Dark theme interface\n- 📱 Responsive design, adapts to window size\n- 🎨 Smart content rendering (Markdown, JSON, XML, HTML)\n- 💫 Smooth animations\n\n💡 **Usage Tips:**\n- Resize the window, chat area will adapt automatically\n- Try requesting different content formats to experience smart rendering\n- Input box supports Enter key for quick sending", 
-      sender: "bot" 
+      text: "🎉 Welcome to AI Chat Desktop!\n\n✨ **New Features:**\n- 🌙 Dark theme interface\n- 📱 Responsive design, adapts to window size\n- 🎨 Smart content rendering (Markdown, JSON, XML, HTML)\n- 💫 Smooth animations\n- 🧠 Context-aware conversations with sliding window\n\n💡 **Usage Tips:**\n- Resize the window, chat area will adapt automatically\n- Try requesting different content formats to experience smart rendering\n- Input box supports Enter key for quick sending\n- Conversations maintain context using sliding window technology", 
+      sender: "bot",
+      timestamp: Date.now()
     },
   ]);
   const [inputValue, setInputValue] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [contextInfo, setContextInfo] = useState("");
 
   useEffect(() => {
     const loadKey = async () => {
@@ -33,22 +42,65 @@ function App() {
     setInputValue("");
     setIsLoading(true);
 
-    const userMessage = { id: Date.now(), text: trimmedValue, sender: "user" };
+    const userMessage: ChatMessage = { 
+      id: Date.now(), 
+      text: trimmedValue, 
+      sender: "user",
+      timestamp: Date.now()
+    };
     setMessages(prevMessages => [...prevMessages, userMessage]);
 
     try {
       const reply = await invoke("send_message_to_openai", { message: trimmedValue });
-      const botMessage = { id: Date.now() + 1, text: reply as string, sender: "bot" };
+      const botMessage: ChatMessage = { 
+        id: Date.now() + 1, 
+        text: reply as string, 
+        sender: "bot",
+        timestamp: Date.now()
+      };
       setMessages(prevMessages => [...prevMessages, botMessage]);
+      
+      // Update context info
+      updateContextInfo();
     } catch (error) {
-      const errorMessage = { 
+      const errorMessage: ChatMessage = { 
         id: Date.now() + 1, 
         text: `❌ Error: ${error}`, 
-        sender: "bot" 
+        sender: "bot",
+        timestamp: Date.now()
       };
       setMessages(prevMessages => [...prevMessages, errorMessage]);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const updateContextInfo = async () => {
+    try {
+      const context = await invoke("get_chat_context");
+      const contextMessages = context as any[];
+      const userMessages = contextMessages.filter((msg: any) => msg.role === "user").length;
+      const assistantMessages = contextMessages.filter((msg: any) => msg.role === "assistant").length;
+      setContextInfo(`Context: ${userMessages} user messages, ${assistantMessages} assistant messages`);
+    } catch (error) {
+      console.error("Failed to get context info:", error);
+    }
+  };
+
+  const handleClearHistory = async () => {
+    try {
+      await invoke("clear_chat_history");
+      setMessages([
+        { 
+          id: Date.now(), 
+          text: "🗑️ Chat history cleared! The conversation context has been reset. You can start a new conversation.", 
+          sender: "bot",
+          timestamp: Date.now()
+        }
+      ]);
+      setContextInfo("");
+    } catch (error) {
+      console.error("Failed to clear history:", error);
     }
   };
 
@@ -73,6 +125,18 @@ function App() {
           value={apiKey}
           onChange={(e) => handleApiKeyChange(e.target.value)}
         />
+        {contextInfo && (
+          <div className="context-info">
+            <span>{contextInfo}</span>
+            <button 
+              onClick={handleClearHistory}
+              className="clear-history-btn"
+              title="Clear chat history and reset context"
+            >
+              🗑️ Clear
+            </button>
+          </div>
+        )}
       </div>
       <div className="message-list">
         {messages.map((message) => (
