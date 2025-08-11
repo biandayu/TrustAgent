@@ -17,6 +17,7 @@ reqwest = { version = "0.11", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 async-openai = "0.16.1"
 tauri-plugin-store = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "v1" }
+uuid = { version = "1.8.0", features = ["v4", "serde"] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

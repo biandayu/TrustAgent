@@ -1,106 +1,111 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 import SmartContentRenderer from "./components/SmartContentRenderer";
+import Sidebar from "./components/Sidebar";
 import "./App.css";
 
 interface ChatMessage {
-  id: number;
-  text: string;
-  sender: "user" | "bot";
-  timestamp?: number;
+  role: string;
+  content: string;
+  timestamp: number;
+}
+
+interface ChatSession {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  created_at: number;
+  updated_at: number;
 }
 
 function App() {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { 
-      id: 1, 
-      text: "🎉 Welcome to AI Chat Desktop!\n\n✨ **New Features:**\n- 🌙 Dark theme interface\n- 📱 Responsive design, adapts to window size\n- 🎨 Smart content rendering (Markdown, JSON, XML, HTML)\n- 💫 Smooth animations\n- 🧠 Context-aware conversations with sliding window\n\n💡 **Usage Tips:**\n- Resize the window, chat area will adapt automatically\n- Try requesting different content formats to experience smart rendering\n- Input box supports Enter key for quick sending\n- Conversations maintain context using sliding window technology", 
-      sender: "bot",
-      timestamp: Date.now()
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [contextInfo, setContextInfo] = useState("");
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // 加载所有会话列表
+  const loadSessions = async () => {
+    const list = await invoke("get_all_sessions");
+    setSessions(list as ChatSession[]);
+  };
+
+  // 加载当前会话内容
+  const loadCurrentSession = async () => {
+    try {
+      const session = await invoke("get_current_session");
+      const s = session as any;
+      setCurrentSessionId(s.id);
+      setMessages(s.messages || []);
+    } catch {
+      setMessages([]);
+      setCurrentSessionId(null);
+    }
+  };
 
   useEffect(() => {
-    const loadKey = async () => {
-      const key = await invoke("load_api_key");
-      if (key) {
-        setApiKey(key as string);
-      }
-    };
-    loadKey();
+    loadSessions();
+    loadCurrentSession();
+    // 加载API Key
+    invoke("load_api_key").then((key) => {
+      if (key) setApiKey(key as string);
+    });
   }, []);
 
+  // 新建会话
+  const handleNewChat = async () => {
+    try {
+      await invoke("finalize_and_new_chat");
+      await loadSessions();
+      await loadCurrentSession();
+    } catch (error) {
+      console.error("Failed to create new chat:", error);
+      alert(`Error creating new chat: ${error}`);
+    }
+  };
+
+  // 切换会话
+  const handleSelectSession = async (id: string) => {
+    try {
+      const new_session = await invoke("select_session", { idToSelect: id });
+      await loadSessions(); // 重新加载会话列表以更新标题
+      // 使用返回的数据更新当前会话视图
+      const s = new_session as ChatSession;
+      setCurrentSessionId(s.id);
+      setMessages(s.messages || []);
+    } catch (error) {
+      console.error("Failed to switch session:", error);
+      alert(`Error switching session: ${error}`);
+    }
+  };
+
+  // 发送消息
   const handleSendMessage = async () => {
     const trimmedValue = inputValue.trim();
     if (!trimmedValue || isLoading) return;
-
-    // Clear input immediately
     setInputValue("");
     setIsLoading(true);
-
-    const userMessage: ChatMessage = { 
-      id: Date.now(), 
-      text: trimmedValue, 
-      sender: "user",
-      timestamp: Date.now()
-    };
-    setMessages(prevMessages => [...prevMessages, userMessage]);
-
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: trimmedValue, timestamp: Date.now() },
+    ]);
     try {
       const reply = await invoke("send_message_to_openai", { message: trimmedValue });
-      const botMessage: ChatMessage = { 
-        id: Date.now() + 1, 
-        text: reply as string, 
-        sender: "bot",
-        timestamp: Date.now()
-      };
-      setMessages(prevMessages => [...prevMessages, botMessage]);
-      
-      // Update context info
-      updateContextInfo();
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: reply as string, timestamp: Date.now() },
+      ]);
+      await loadSessions();
     } catch (error) {
-      const errorMessage: ChatMessage = { 
-        id: Date.now() + 1, 
-        text: `❌ Error: ${error}`, 
-        sender: "bot",
-        timestamp: Date.now()
-      };
-      setMessages(prevMessages => [...prevMessages, errorMessage]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `❌ Error: ${error}`, timestamp: Date.now() },
+      ]);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const updateContextInfo = async () => {
-    try {
-      const context = await invoke("get_chat_context");
-      const contextMessages = context as any[];
-      const userMessages = contextMessages.filter((msg: any) => msg.role === "user").length;
-      const assistantMessages = contextMessages.filter((msg: any) => msg.role === "assistant").length;
-      setContextInfo(`Context: ${userMessages} user messages, ${assistantMessages} assistant messages`);
-    } catch (error) {
-      console.error("Failed to get context info:", error);
-    }
-  };
-
-  const handleClearHistory = async () => {
-    try {
-      await invoke("clear_chat_history");
-      setMessages([
-        { 
-          id: Date.now(), 
-          text: "🗑️ Chat history cleared! The conversation context has been reset. You can start a new conversation.", 
-          sender: "bot",
-          timestamp: Date.now()
-        }
-      ]);
-      setContextInfo("");
-    } catch (error) {
-      console.error("Failed to clear history:", error);
     }
   };
 
@@ -117,53 +122,51 @@ function App() {
   };
 
   return (
-    <div className="chat-container">
-      <div className="api-key-input">
-        <input
-          type="password"
-          placeholder="🔑 Enter your OpenAI API Key"
-          value={apiKey}
-          onChange={(e) => handleApiKeyChange(e.target.value)}
-        />
-        {contextInfo && (
-          <div className="context-info">
-            <span>{contextInfo}</span>
-            <button 
-              onClick={handleClearHistory}
-              className="clear-history-btn"
-              title="Clear chat history and reset context"
-            >
-              🗑️ Clear
-            </button>
-          </div>
-        )}
-      </div>
-      <div className="message-list">
-        {messages.map((message) => (
-          <div key={message.id} className={`message ${message.sender}`}>
-            {message.sender === "bot" ? (
-              <SmartContentRenderer content={message.text} />
-            ) : (
-              <div className="user-message">{message.text}</div>
-            )}
-          </div>
-        ))}
-      </div>
-      <div className="message-input">
-        <input
-          type="text"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyPress={handleKeyPress}
-          placeholder="💬 Type your message... Try requesting JSON, Markdown, HTML, or XML content"
-          disabled={isLoading}
-        />
-        <button 
-          onClick={handleSendMessage} 
-          disabled={isLoading || !inputValue.trim()}
-        >
-          {isLoading ? "Sending..." : "Send"}
-        </button>
+    <div className="main-layout">
+      <Sidebar
+        sessions={sessions}
+        currentSessionId={currentSessionId}
+        onSelect={handleSelectSession}
+        onNewChat={handleNewChat}
+        collapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed((c) => !c)}
+      />
+      <div className="chat-container">
+        <div className="api-key-input">
+          <input
+            type="password"
+            placeholder="🔑 Enter your OpenAI API Key"
+            value={apiKey}
+            onChange={(e) => handleApiKeyChange(e.target.value)}
+          />
+        </div>
+        <div className="message-list">
+          {messages.map((message, idx) => (
+            <div key={idx} className={`message ${message.role === "user" ? "user" : "bot"}`}>
+              {message.role === "assistant" || message.role === "bot" ? (
+                <SmartContentRenderer content={message.content} />
+              ) : (
+                <div className="user-message">{message.content}</div>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="message-input">
+          <input
+            type="text"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder="💬 Type your message... Try requesting JSON, Markdown, HTML, or XML content"
+            disabled={isLoading}
+          />
+          <button
+            onClick={handleSendMessage}
+            disabled={isLoading || !inputValue.trim()}
+          >
+            {isLoading ? "Sending..." : "Send"}
+          </button>
+        </div>
       </div>
     </div>
   );
