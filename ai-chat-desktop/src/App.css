@@ -1,3 +1,41 @@
+.config-gear-icon {
+  color: #FFFFFF !important;
+}
+.config-gear-label {
+  color: #FFFFFF !important;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+.sidebar-footer {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  padding: 16px 12px;
+  background: #23233a;
+  border-top: 1px solid #222;
+  display: flex;
+  justify-content: center;
+}
+
+.config-openai-btn {
+  width: calc(100% - 24px); /* Adjust width to account for 12px padding on each side of sidebar-footer */
+  padding: 12px 0; /* Increased vertical padding */
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); /* Revert to original gradient */
+  color: #fff;
+  border: none; /* Remove border */
+  border-radius: 6px;
+  font-weight: bold;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+  display: flex; /* Make the button a flex container */
+  align-items: center; /* Vertically center content */
+  justify-content: center; /* Horizontally center content */
+}
+.config-openai-btn:hover {
+  background: linear-gradient(90deg, #5a67d8 0%, #6b21a8 100%);
+}
 * {
   margin: 0;
   padding: 0;
@@ -21,6 +59,7 @@ body {
   width: 100vw;
   height: 100vh;
   background: #1a1a1a;
+  position: relative;
 }
 
 .sidebar {
@@ -33,6 +72,7 @@ body {
   transition: width 0.2s;
   min-width: 60px;
   max-width: 320px;
+  position: relative;
 }
 .sidebar.collapsed {
   width: 48px;

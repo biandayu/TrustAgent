@@ -1,19 +1,45 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use async_openai::{
-    types::{CreateChatCompletionRequestArgs, ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs, ChatCompletionRequestAssistantMessageArgs},
+    config::OpenAIConfig,
+    types::{
+        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestSystemMessageArgs,
+        ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
+    },
     Client,
-    config::OpenAIConfig
 };
-use tauri_plugin_store::{StoreBuilder, Store};
-use tauri::{Manager, State, Wry};
-use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
+use tauri::{Manager, State, Wry};
 use uuid::Uuid;
 
+// --- Configuration Structures ---
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct OpenAIParams {
+    api_key: String,
+    base_url: String,
+    model: String,
+}
+
+impl Default for OpenAIParams {
+    fn default() -> Self {
+        Self {
+            api_key: "".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            model: "gpt-4-turbo".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+struct AppConfig {
+    openai: OpenAIParams,
+}
+
+// --- Chat Structures ---
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ChatMessage {
     role: String,
@@ -50,23 +76,37 @@ fn now_ts() -> u64 {
         .as_secs()
 }
 
+// --- Application State ---
 struct AppState {
-    store: Mutex<Store<Wry>>,
+    config: Mutex<AppConfig>,
     sessions: Mutex<HashMap<String, ChatSession>>,
     current_session_id: Mutex<Option<String>>,
 }
 
-fn get_sessions_dir() -> PathBuf {
-    let mut dir = std::env::current_dir().unwrap();
-    dir.push(".chats");
-    if !dir.exists() {
-        fs::create_dir_all(&dir).ok();
+// --- Filesystem and Config Logic ---
+fn get_app_data_dir() -> PathBuf {
+    let data_dir = dirs_next::data_dir().expect("Failed to find data directory");
+    let app_data_dir = data_dir.join("TrustAgent").join("data");
+    if !app_data_dir.exists() {
+        fs::create_dir_all(&app_data_dir).expect("Failed to create app data directory");
     }
-    dir
+    app_data_dir
+}
+
+fn get_app_config_path() -> PathBuf {
+    let config_dir = dirs_next::config_dir().expect("Failed to find config directory");
+    let app_config_dir = config_dir.join("TrustAgent").join("configuration");
+    if !app_config_dir.exists() {
+        fs::create_dir_all(&app_config_dir).expect("Failed to create app config directory");
+    }
+    app_config_dir.join("settings.json")
 }
 
 fn save_session_to_file(session: &ChatSession) -> Result<(), String> {
-    let dir = get_sessions_dir();
+    let dir = get_app_data_dir().join(".chats");
+     if !dir.exists() {
+        fs::create_dir_all(&dir).ok();
+    }
     let path = dir.join(format!("{}.json", session.id));
     let content = serde_json::to_string_pretty(session).map_err(|e| e.to_string())?;
     fs::write(path, content).map_err(|e| e.to_string())?;
@@ -74,7 +114,10 @@ fn save_session_to_file(session: &ChatSession) -> Result<(), String> {
 }
 
 fn load_sessions_from_files() -> HashMap<String, ChatSession> {
-    let dir = get_sessions_dir();
+    let dir = get_app_data_dir().join(".chats");
+     if !dir.exists() {
+        fs::create_dir_all(&dir).ok();
+    }
     let mut map = HashMap::new();
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -88,92 +131,85 @@ fn load_sessions_from_files() -> HashMap<String, ChatSession> {
     map
 }
 
+fn load_or_initialize_config() -> AppConfig {
+    let config_path = get_app_config_path();
+    if config_path.exists() {
+        let content = fs::read_to_string(&config_path).unwrap_or_default();
+        serde_json::from_str(&content).unwrap_or_else(|_| {
+            // If parsing fails, create a default and save it
+            let default_config = AppConfig::default();
+            fs::write(
+                &config_path,
+                serde_json::to_string_pretty(&default_config).unwrap(),
+            )
+            .ok();
+            default_config
+        })
+    } else {
+        let default_config = AppConfig::default();
+        fs::write(
+            &config_path,
+            serde_json::to_string_pretty(&default_config).unwrap(),
+        )
+        .expect("Failed to write default config file");
+        default_config
+    }
+}
+
 fn generate_session_title(messages: &[ChatMessage]) -> String {
-    // 简单策略：取首条用户消息的前20字符
-    messages.iter()
+    messages
+        .iter()
         .find(|m| m.role == "user")
         .map(|m| {
             let mut t = m.content.trim().to_string();
-            if t.len() > 20 { t.truncate(20); t.push_str("..."); }
+            if t.len() > 20 {
+                t.truncate(20);
+                t.push_str("...");
+            }
             t
         })
         .unwrap_or_else(|| "New Chat".to_string())
 }
 
+// --- Tauri Commands ---
+
 #[tauri::command]
-async fn new_chat_session(state: State<'_, AppState>) -> Result<String, String> {
-    let mut sessions = state.sessions.lock().unwrap();
-    let mut current_id = state.current_session_id.lock().unwrap();
-    let id = Uuid::new_v4().to_string();
-    let session = ChatSession::new(id.clone(), "New Chat".to_string());
-    sessions.insert(id.clone(), session);
-    *current_id = Some(id.clone());
-    Ok(id)
+fn open_config_file() -> Result<(), String> {
+    let path = get_app_config_path();
+    opener::open(&path).map_err(|e| format!("Failed to open config file: {}", e))
 }
 
 #[tauri::command]
-async fn switch_chat_session(session_id: String, state: State<'_, AppState>) -> Result<ChatSession, String> {
-    let mut current_id = state.current_session_id.lock().unwrap();
-    let sessions = state.sessions.lock().unwrap();
-    if let Some(session) = sessions.get(&session_id) {
-        *current_id = Some(session_id.clone());
-        Ok(session.clone())
-    } else {
-        Err("Session not found".to_string())
+async fn send_message_to_openai(
+    message: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let config = state.config.lock().unwrap().clone();
+
+    if config.openai.api_key.is_empty() {
+        return Err("OpenAI API key is not set in the configuration file.".to_string());
     }
-}
 
-#[tauri::command]
-async fn get_all_sessions(state: State<'_, AppState>) -> Result<Vec<ChatSession>, String> {
-    let sessions = state.sessions.lock().unwrap();
-    let mut list: Vec<_> = sessions.values().cloned().collect();
-    // 按更新时间倒序排序
-    list.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
-    Ok(list)
-}
+    let openai_config = OpenAIConfig::new()
+        .with_api_key(config.openai.api_key)
+        .with_api_base(config.openai.base_url);
 
-#[tauri::command]
-async fn save_current_session(state: State<'_, AppState>) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().unwrap();
-    let current_id = state.current_session_id.lock().unwrap();
-    if let Some(id) = &*current_id {
-        if let Some(session) = sessions.get_mut(id) {
-            // 如果标题是默认的“New Chat”并且会话里有消息了，就生成一个真实的标题
-            if session.title == "New Chat" && !session.messages.is_empty() {
-                session.title = generate_session_title(&session.messages);
-            }
-            session.updated_at = now_ts();
-            save_session_to_file(session)?;
-        }
-    }
-    Ok(())
-}
+    let client = Client::with_config(openai_config);
 
-#[tauri::command]
-async fn send_message_to_openai(message: String, state: State<'_, AppState>) -> Result<String, String> {
-    let api_key = {
-        let store = state.store.lock().unwrap();
-        match store.get("api_key") {
-            Some(key) => key.as_str().unwrap().to_string(),
-            None => return Err("API key not found".to_string()),
-        }
-    };
-    let config = OpenAIConfig::new().with_api_key(api_key);
-    let client = Client::with_config(config);
-
-    // --- Start of lock-holding block ---
     let openai_msgs = {
         let mut sessions = state.sessions.lock().unwrap();
         let mut current_id = state.current_session_id.lock().unwrap();
         let session_id = current_id.clone().unwrap_or_else(|| {
             let id = Uuid::new_v4().to_string();
-            sessions.insert(id.clone(), ChatSession::new(id.clone(), "New Chat".to_string()));
+            sessions.insert(
+                id.clone(),
+                ChatSession::new(id.clone(), "New Chat".to_string()),
+            );
             *current_id = Some(id.clone());
             id
         });
         let session = sessions.get_mut(&session_id).unwrap();
 
-        // Add user message
         session.messages.push(ChatMessage {
             role: "user".to_string(),
             content: message.clone(),
@@ -181,56 +217,62 @@ async fn send_message_to_openai(message: String, state: State<'_, AppState>) -> 
         });
         session.updated_at = now_ts();
 
-        // Add system message if none exists
         if session.messages.iter().all(|m| m.role != "system") {
-            session.messages.insert(0, ChatMessage {
-                role: "system".to_string(),
-                content: "You are a helpful AI assistant. You can help with various tasks and provide responses in different formats like JSON, Markdown, XML, HTML, or plain text. Always respond in a helpful and informative way.".to_string(),
-                timestamp: now_ts(),
-            });
+            session.messages.insert(
+                0,
+                ChatMessage {
+                    role: "system".to_string(),
+                    content: "You are a helpful AI assistant.".to_string(),
+                    timestamp: now_ts(),
+                },
+            );
         }
 
-        // Sliding window context management
-        if session.messages.len() > 20 {
-            let system = session.messages.iter().find(|m| m.role == "system").cloned();
-            let mut recent: Vec<_> = session.messages.iter().filter(|m| m.role != "system").rev().take(19).cloned().collect();
-            recent.reverse();
-            session.messages = system.into_iter().chain(recent).collect();
-        }
-
-        // Construct request messages (cloned)
-        session.messages.iter().map(|msg| {
-            match msg.role.as_str() {
+        session
+            .messages
+            .iter()
+            .map(|msg| match msg.role.as_str() {
                 "system" => ChatCompletionRequestSystemMessageArgs::default()
                     .content(msg.content.clone())
-                    .build().unwrap().into(),
+                    .build()
+                    .unwrap()
+                    .into(),
                 "user" => ChatCompletionRequestUserMessageArgs::default()
                     .content(msg.content.clone())
-                    .build().unwrap().into(),
+                    .build()
+                    .unwrap()
+                    .into(),
                 "assistant" => ChatCompletionRequestAssistantMessageArgs::default()
                     .content(msg.content.clone())
-                    .build().unwrap().into(),
+                    .build()
+                    .unwrap()
+                    .into(),
                 _ => ChatCompletionRequestUserMessageArgs::default()
                     .content(msg.content.clone())
-                    .build().unwrap().into(),
-            }
-        }).collect::<Vec<_>>()
-    }; // --- All locks are dropped here ---
+                    .build()
+                    .unwrap()
+                    .into(),
+            })
+            .collect::<Vec<_>>()
+    };
 
     let request = CreateChatCompletionRequestArgs::default()
-        .model("gpt-3.5-turbo")
+        .model(config.openai.model)
         .messages(openai_msgs)
-        .max_tokens(1000u16)
-        .temperature(0.7)
-        .build().map_err(|e| e.to_string())?;
+        .build()
+        .map_err(|e| e.to_string())?;
 
-    // --- Await is now safe ---
-    let response = client.chat().create(request).await.map_err(|e| e.to_string())?;
-    let assistant_message = response.choices.get(0)
+    let response = client
+        .chat()
+        .create(request)
+        .await
+        .map_err(|e| e.to_string())?;
+    let assistant_message = response
+        .choices
+        .get(0)
         .and_then(|choice| choice.message.content.clone())
         .unwrap_or_else(|| "No response received".to_string());
 
-    // --- Re-acquire locks to update state ---
     {
         let mut sessions = state.sessions.lock().unwrap();
         let current_id = state.current_session_id.lock().unwrap();
@@ -250,15 +292,11 @@ async fn send_message_to_openai(message: String, state: State<'_, AppState>) -> 
 }
 
 #[tauri::command]
-async fn get_current_session(state: State<'_, AppState>) -> Result<ChatSession, String> {
+async fn get_all_sessions(state: State<'_, AppState>) -> Result<Vec<ChatSession>, String> {
     let sessions = state.sessions.lock().unwrap();
-    let current_id = state.current_session_id.lock().unwrap();
-    if let Some(id) = &*current_id {
-        if let Some(session) = sessions.get(id) {
-            return Ok(session.clone());
-        }
-    }
-    Err("No current session".to_string())
+    let mut list: Vec<_> = sessions.values().cloned().collect();
+    list.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
+    Ok(list)
 }
 
 #[tauri::command]
@@ -266,15 +304,14 @@ async fn finalize_and_new_chat(state: State<'_, AppState>) -> Result<String, Str
     let mut sessions = state.sessions.lock().unwrap();
     let mut current_id_guard = state.current_session_id.lock().unwrap();
 
-    // 先判断并处理旧的会话
     if let Some(old_id) = current_id_guard.clone() {
-        let is_empty = sessions.get(&old_id).map_or(true, |s| s.messages.is_empty());
+        let is_empty = sessions
+            .get(&old_id)
+            .map_or(true, |s| s.messages.is_empty());
 
         if is_empty {
-            // 如果旧会话是空的，就从内存中移除
             sessions.remove(&old_id);
         } else {
-            // 如果旧会话非空，就更新并保存它
             if let Some(session) = sessions.get_mut(&old_id) {
                 if session.title == "New Chat" {
                     session.title = generate_session_title(&session.messages);
@@ -285,7 +322,6 @@ async fn finalize_and_new_chat(state: State<'_, AppState>) -> Result<String, Str
         }
     }
 
-    // 总是创建并设置一个新的会话
     let new_id = Uuid::new_v4().to_string();
     let new_session = ChatSession::new(new_id.clone(), "New Chat".to_string());
     sessions.insert(new_id.clone(), new_session);
@@ -295,56 +331,22 @@ async fn finalize_and_new_chat(state: State<'_, AppState>) -> Result<String, Str
 }
 
 #[tauri::command]
-async fn save_api_key(api_key: String, state: State<'_, AppState>) -> Result<(), String> {
-    let mut store = state.store.lock().unwrap();
-    store.insert("api_key".to_string(), api_key.into()).map_err(|e| e.to_string())?;
-    store.save().map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-async fn load_api_key(state: State<'_, AppState>) -> Result<Option<String>, String> {
-    let store = state.store.lock().unwrap();
-    Ok(store.get("api_key").map(|v| v.as_str().unwrap().to_string()))
-}
-
-#[tauri::command]
-async fn clear_chat_history(state: State<'_, AppState>) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().unwrap();
-    sessions.clear();
-    Ok(())
-}
-
-#[tauri::command]
-async fn get_chat_context(state: State<'_, AppState>) -> Result<Vec<ChatMessage>, String> {
-    let sessions = state.sessions.lock().unwrap();
-    let current_id = state.current_session_id.lock().unwrap();
-    if let Some(id) = &*current_id {
-        if let Some(session) = sessions.get(id) {
-            Ok(session.messages.clone())
-        } else {
-            Ok(Vec::new())
-        }
-    } else {
-        Ok(Vec::new())
-    }
-}
-
-#[tauri::command]
-async fn select_session(id_to_select: String, state: State<'_, AppState>) -> Result<ChatSession, String> {
+async fn select_session(
+    id_to_select: String,
+    state: State<'_, AppState>,
+) -> Result<ChatSession, String> {
     let mut sessions = state.sessions.lock().unwrap();
     let mut current_id_guard = state.current_session_id.lock().unwrap();
 
-    // 1. 最终确定或移除旧的会话
     if let Some(old_id) = current_id_guard.clone() {
         if old_id != id_to_select {
-            let is_empty = sessions.get(&old_id).map_or(true, |s| s.messages.is_empty());
+            let is_empty = sessions
+                .get(&old_id)
+                .map_or(true, |s| s.messages.is_empty());
 
             if is_empty {
-                // 如果旧会话是空的，就从内存中移除，不保存
                 sessions.remove(&old_id);
             } else {
-                // 如果旧会话非空，就更新并保存它
                 if let Some(old_session) = sessions.get_mut(&old_id) {
                     if old_session.title == "New Chat" {
                         old_session.title = generate_session_title(&old_session.messages);
@@ -356,7 +358,6 @@ async fn select_session(id_to_select: String, state: State<'_, AppState>) -> Res
         }
     }
 
-    // 2. 切换到新会话
     if let Some(new_session) = sessions.get(&id_to_select) {
         *current_id_guard = Some(id_to_select);
         Ok(new_session.clone())
@@ -366,31 +367,25 @@ async fn select_session(id_to_select: String, state: State<'_, AppState>) -> Res
 }
 
 fn main() {
-    let context = tauri::generate_context!();
+    let config = load_or_initialize_config();
+    let sessions = load_sessions_from_files();
+
+    
+
     tauri::Builder::default()
-        .plugin(tauri_plugin_store::Builder::default().build())
-        .setup(|app| {
-            let store = StoreBuilder::new(app.handle(), ".settings.dat".parse().unwrap()).build();
-            let sessions = load_sessions_from_files();
-            app.manage(AppState { 
-                store: Mutex::new(store),
-                sessions: Mutex::new(sessions),
-                current_session_id: Mutex::new(None),
-            });
-            Ok(())
+        .manage(AppState {
+            config: Mutex::new(config),
+            sessions: Mutex::new(sessions),
+            current_session_id: Mutex::new(None),
         })
+        
         .invoke_handler(tauri::generate_handler![
             send_message_to_openai,
-            new_chat_session,
             get_all_sessions,
-            get_current_session,
             finalize_and_new_chat,
-            save_api_key,
-            load_api_key,
-            clear_chat_history,
-            get_chat_context,
-            select_session
+            select_session,
+            open_config_file // Also keep it invokable from frontend if needed
         ])
-        .run(context)
+        .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -21,7 +21,6 @@ interface ChatSession {
 function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
-  const [apiKey, setApiKey] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -49,10 +48,6 @@ function App() {
   useEffect(() => {
     loadSessions();
     loadCurrentSession();
-    // 加载API Key
-    invoke("load_api_key").then((key) => {
-      if (key) setApiKey(key as string);
-    });
   }, []);
 
   // 新建会话
@@ -116,9 +111,9 @@ function App() {
     }
   };
 
-  const handleApiKeyChange = async (newKey: string) => {
-    setApiKey(newKey);
-    await invoke("save_api_key", { apiKey: newKey });
+  // 左下角Config按钮回调
+  const handleConfigOpenAI = () => {
+    invoke("open_config_file").catch(console.error);
   };
 
   return (
@@ -126,20 +121,13 @@ function App() {
       <Sidebar
         sessions={sessions}
         currentSessionId={currentSessionId}
+        onConfigOpenAI={handleConfigOpenAI}
         onSelect={handleSelectSession}
         onNewChat={handleNewChat}
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed((c) => !c)}
       />
       <div className="chat-container">
-        <div className="api-key-input">
-          <input
-            type="password"
-            placeholder="🔑 Enter your OpenAI API Key"
-            value={apiKey}
-            onChange={(e) => handleApiKeyChange(e.target.value)}
-          />
-        </div>
         <div className="message-list">
           {messages.map((message, idx) => (
             <div key={idx} className={`message ${message.role === "user" ? "user" : "bot"}`}>
