@@ -18,4 +18,8 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+
+  css: {
+    postcss: './postcss.config.js',
+  },
 }));

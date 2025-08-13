@@ -8,15 +8,33 @@ use async_openai::{
     },
     Client,
 };
+use async_trait::async_trait;
+use rust_mcp_sdk::{McpClient, StdioTransport, TransportOptions};
+use rust_mcp_sdk::mcp_client::{client_runtime, ClientHandler, ClientRuntime};
+use rust_mcp_sdk::schema::{InitializeRequestParams, Implementation, ClientCapabilities, LATEST_PROTOCOL_VERSION, Tool};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
-use tauri::{Manager, State, Wry};
+use std::sync::{Arc, Mutex};
+use tauri::State;
 use uuid::Uuid;
 
 // --- Configuration Structures ---
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+struct AppConfig {
+    openai: OpenAIParams,
+    #[serde(rename = "mcpServers")]
+    mcp_servers: HashMap<String, McpServerProcessConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct McpServerProcessConfig {
+    command: String,
+    args: Vec<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct OpenAIParams {
     api_key: String,
@@ -32,11 +50,6 @@ impl Default for OpenAIParams {
             model: "gpt-4-turbo".to_string(),
         }
     }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-struct AppConfig {
-    openai: OpenAIParams,
 }
 
 // --- Chat Structures ---
@@ -77,10 +90,20 @@ fn now_ts() -> u64 {
 }
 
 // --- Application State ---
+
+#[derive(Debug, Serialize, Clone)]
+struct McpServerInfo {
+    name: String,
+    status: String, // "running" or "stopped"
+}
+
 struct AppState {
     config: Mutex<AppConfig>,
     sessions: Mutex<HashMap<String, ChatSession>>,
     current_session_id: Mutex<Option<String>>,
+    tool_states: Mutex<HashMap<String, bool>>, // Key: "{server_name}/{tool_name}"
+    mcp_clients: Mutex<HashMap<String, Arc<ClientRuntime>>>,
+    mcp_tools: Mutex<HashMap<String, Vec<Tool>>>,
 }
 
 // --- Filesystem and Config Logic ---
@@ -104,7 +127,7 @@ fn get_app_config_path() -> PathBuf {
 
 fn save_session_to_file(session: &ChatSession) -> Result<(), String> {
     let dir = get_app_data_dir().join(".chats");
-     if !dir.exists() {
+    if !dir.exists() {
         fs::create_dir_all(&dir).ok();
     }
     let path = dir.join(format!("{}.json", session.id));
@@ -124,7 +147,7 @@ fn delete_session_file(session_id: &str) -> Result<(), String> {
 
 fn load_sessions_from_files() -> HashMap<String, ChatSession> {
     let dir = get_app_data_dir().join(".chats");
-     if !dir.exists() {
+    if !dir.exists() {
         fs::create_dir_all(&dir).ok();
     }
     let mut map = HashMap::new();
@@ -145,7 +168,6 @@ fn load_or_initialize_config() -> AppConfig {
     if config_path.exists() {
         let content = fs::read_to_string(&config_path).unwrap_or_default();
         serde_json::from_str(&content).unwrap_or_else(|_| {
-            // If parsing fails, create a default and save it
             let default_config = AppConfig::default();
             fs::write(
                 &config_path,
@@ -180,7 +202,106 @@ fn generate_session_title(messages: &[ChatMessage]) -> String {
         .unwrap_or_else(|| "New Chat".to_string())
 }
 
-// --- Tauri Commands ---
+// --- Tauri MCP Commands ---
+
+#[tauri::command]
+fn get_mcp_servers(state: State<'_, AppState>) -> Result<Vec<McpServerInfo>, String> {
+    let config = state.config.lock().unwrap();
+    let clients = state.mcp_clients.lock().unwrap();
+    let servers_info = config
+        .mcp_servers
+        .keys()
+        .map(|name| McpServerInfo {
+            name: name.clone(),
+            status: if clients.contains_key(name) {
+                "running".to_string()
+            } else {
+                "stopped".to_string()
+            },
+        })
+        .collect();
+    Ok(servers_info)
+}
+
+#[tauri::command]
+async fn start_mcp_server(server_name: String, state: State<'_, AppState>) -> Result<(), String> {
+    let config = state.config.lock().unwrap().clone();
+    let server_config = config
+        .mcp_servers
+        .get(&server_name)
+        .ok_or_else(|| "Server config not found".to_string())?;
+
+    // Step 1: 构造 client details
+    let client_details = InitializeRequestParams {
+        capabilities: ClientCapabilities::default(),
+        client_info: Implementation {
+            name: format!("tauri-mcp-client-{}", server_name),
+            version: "0.1.0".into(),
+            title: Some(format!("tauri-mcp-client-{}", server_name)),
+        },
+        protocol_version: LATEST_PROTOCOL_VERSION.into(),
+    };
+
+    // Step 2: 启动 MCP Server 子进程并创建 stdio transport
+    let transport = StdioTransport::create_with_server_launch(
+        &server_config.command,
+        server_config.args.clone(),
+        None,
+        TransportOptions::default(),
+    ).map_err(|e| e.to_string())?;
+
+    // Step 3: 实现 handler
+    struct MyClientHandler;
+    #[async_trait]
+    impl ClientHandler for MyClientHandler {}
+    let handler = MyClientHandler {};
+
+    // Step 4: 创建 MCP client
+    let client = client_runtime::create_client(client_details, transport, handler);
+
+    // Step 5: 启动 client
+    McpClient::start(client.clone()).await.map_err(|e| e.to_string())?;
+
+    // Step 6: 获取工具列表
+    let tools = McpClient::list_tools(&*client, None).await
+        .map_err(|e| format!("Failed to get tools: {e}"))?
+        .tools;
+
+    state
+        .mcp_clients
+        .lock()
+        .unwrap()
+        .insert(server_name.clone(), client.clone());
+    state
+        .mcp_tools
+        .lock()
+        .unwrap()
+        .insert(server_name.clone(), tools);
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_mcp_server(server_name: String, state: State<'_, AppState>) -> Result<(), String> {
+    // 先移除 client，释放锁
+    let client = {
+        let mut clients = state.mcp_clients.lock().unwrap();
+        clients.remove(&server_name)
+    };
+    if let Some(client) = client {
+        McpClient::shut_down(&*client).await.map_err(|e| e.to_string())?;
+        state.mcp_tools.lock().unwrap().remove(&server_name);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_discovered_tools(server_name: String, state: State<'_, AppState>) -> Result<Vec<Tool>, String> {
+    let tools = state.mcp_tools.lock().unwrap();
+    Ok(tools.get(&server_name).cloned().unwrap_or_default())
+}
+
+// --- Tauri Session Commands ---
 
 #[tauri::command]
 fn rename_session(id: String, new_title: String, state: State<'_, AppState>) -> Result<(), String> {
@@ -399,16 +520,22 @@ fn main() {
     let config = load_or_initialize_config();
     let sessions = load_sessions_from_files();
 
-    
-
     tauri::Builder::default()
         .manage(AppState {
             config: Mutex::new(config),
             sessions: Mutex::new(sessions),
             current_session_id: Mutex::new(None),
+            tool_states: Mutex::new(HashMap::new()),
+            mcp_clients: Mutex::new(HashMap::new()),
+            mcp_tools: Mutex::new(HashMap::new()),
         })
-        
         .invoke_handler(tauri::generate_handler![
+            // MCP
+            get_mcp_servers,
+            start_mcp_server,
+            stop_mcp_server,
+            get_discovered_tools,
+            // Session
             send_message_to_openai,
             get_all_sessions,
             finalize_and_new_chat,

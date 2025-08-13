@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 import SmartContentRenderer from "./components/SmartContentRenderer";
 import Sidebar from "./components/Sidebar";
-import "./App.css";
+import "./App.css"; // Keep this import for now, even if empty
+import McpToolsMenu from "./components/McpToolsMenu";
 
 interface ChatMessage {
   role: string;
@@ -170,7 +171,7 @@ function App() {
   };
 
   return (
-    <div className="main-layout">
+    <div className="flex h-screen bg-gray-800 text-white">
       <Sidebar
         sessions={sessions}
         currentSessionId={currentSessionId}
@@ -182,19 +183,27 @@ function App() {
         onRenameChat={handleRenameChat}
         onDeleteChat={handleDeleteChat}
       />
-      <div className="chat-container">
-        <div className="message-list">
+      <div className="flex flex-col flex-1">
+        <div className="flex-1 overflow-y-auto p-4">
           {messages.map((message, idx) => (
-            <div key={idx} className={`message ${message.role === "user" ? "user" : "bot"}`}>
+            <div
+              key={idx}
+              className={`p-3 rounded-lg mb-2 max-w-[85%] word-wrap break-words relative animate-messageSlideIn ${
+                message.role === "user"
+                  ? "bg-blue-600 ml-auto text-right shadow-lg shadow-blue-500/30"
+                  : "bg-gray-700 mr-auto border border-gray-600 backdrop-blur-md shadow-lg shadow-black/20"
+              }`}
+            >
               {message.role === "assistant" || message.role === "bot" ? (
                 <SmartContentRenderer content={message.content} />
               ) : (
-                <div className="user-message">{message.content}</div>
+                <div className="text-white font-medium leading-relaxed">{message.content}</div>
               )}
             </div>
           ))}
         </div>
-        <div className="message-input">
+        <div className="p-4 bg-gray-900 flex items-center space-x-3 border-t border-gray-700 backdrop-blur-md">
+          <McpToolsMenu />
           <input
             type="text"
             value={inputValue}
@@ -202,10 +211,12 @@ function App() {
             onKeyPress={handleKeyPress}
             placeholder="💬 Type your message... Try requesting JSON, Markdown, HTML, or XML content"
             disabled={isLoading}
+            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white placeholder-gray-400 transition-all duration-300 ease-in-out disabled:opacity-60 disabled:cursor-not-allowed"
           />
           <button
             onClick={handleSendMessage}
             disabled={isLoading || !inputValue.trim()}
+            className="px-5 py-3 rounded-lg bg-gradient-to-r from-blue-600 to-purple-700 text-white font-semibold cursor-pointer transition-all duration-300 ease-in-out shadow-lg shadow-blue-500/30 hover:from-blue-700 hover:to-purple-800 hover:translate-y-[-2px] active:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed disabled:shadow-none disabled:hover:translate-y-0"
           >
             {isLoading ? "Sending..." : "Send"}
           </button>
