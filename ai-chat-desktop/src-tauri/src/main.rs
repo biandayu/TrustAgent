@@ -113,6 +113,15 @@ fn save_session_to_file(session: &ChatSession) -> Result<(), String> {
     Ok(())
 }
 
+fn delete_session_file(session_id: &str) -> Result<(), String> {
+    let dir = get_app_data_dir().join(".chats");
+    let path = dir.join(format!("{}.json", session_id));
+    if path.exists() {
+        fs::remove_file(path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn load_sessions_from_files() -> HashMap<String, ChatSession> {
     let dir = get_app_data_dir().join(".chats");
      if !dir.exists() {
@@ -172,6 +181,26 @@ fn generate_session_title(messages: &[ChatMessage]) -> String {
 }
 
 // --- Tauri Commands ---
+
+#[tauri::command]
+fn rename_session(id: String, new_title: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    if let Some(session) = sessions.get_mut(&id) {
+        session.title = new_title;
+        session.updated_at = now_ts();
+        save_session_to_file(session)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_session(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    if sessions.remove(&id).is_some() {
+        delete_session_file(&id)?;
+    }
+    Ok(())
+}
 
 #[tauri::command]
 fn open_config_file() -> Result<(), String> {
@@ -384,7 +413,9 @@ fn main() {
             get_all_sessions,
             finalize_and_new_chat,
             select_session,
-            open_config_file // Also keep it invokable from frontend if needed
+            open_config_file,
+            rename_session,
+            delete_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

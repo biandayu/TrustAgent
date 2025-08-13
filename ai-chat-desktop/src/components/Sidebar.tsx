@@ -15,6 +15,8 @@ interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
   onConfigOpenAI: () => void;
+  onRenameChat: (id: string, newTitle: string) => void;
+  onDeleteChat: (id: string) => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -25,7 +27,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   collapsed,
   onToggle,
   onConfigOpenAI,
+  onRenameChat,
+  onDeleteChat,
 }) => {
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [menuOpenSessionId, setMenuOpenSessionId] = useState<string | null>(null);
+  const [newTitle, setNewTitle] = useState<string>("");
   return (
     <div className={`sidebar${collapsed ? " collapsed" : ""}`}> 
       <div className="sidebar-header">
@@ -35,21 +42,81 @@ const Sidebar: React.FC<SidebarProps> = ({
         {!collapsed && <span className="sidebar-title">Chats</span>}
       </div>
       {!collapsed && (
-        <>
+        <div className="sidebar-content-area">
           <button className="new-chat-btn" onClick={onNewChat}>+ New Chat</button>
+          <div className="chat-history-header">Chats</div>
           <div className="session-list">
             {sessions.map((s) => (
               <div
                 key={s.id}
                 className={`session-item${s.id === currentSessionId ? " active" : ""}`}
-                onClick={() => onSelect(s.id)}
+                onClick={editingSessionId === s.id ? undefined : () => onSelect(s.id)}
                 title={s.title}
               >
-                <span className="session-title">{s.title}</span>
+                {editingSessionId === s.id ? (
+                  <input
+                    type="text"
+                    value={newTitle}
+                    onChange={(e) => setNewTitle(e.target.value)}
+                    onBlur={() => {
+                      console.log("onBlur fired for session:", s.id); // Debugging line
+                      if (newTitle.trim() !== "" && newTitle !== s.title) {
+                        onRenameChat(s.id, newTitle);
+                      }
+                      setEditingSessionId(null);
+                    }}
+                    onKeyDown={(e) => {
+                      console.log("onKeyDown fired for session:", s.id, "key:", e.key); // Debugging line
+                      if (e.key === "Enter") {
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    autoFocus
+                    className="session-title-input"
+                  />
+                ) : (
+                  <span className="session-title">{s.title}</span>
+                )}
+                <div className="session-actions">
+                  <button
+                    className="session-options-btn"
+                    onClick={(e) => {
+                      e.stopPropagation(); // Prevent selecting the chat
+                      setMenuOpenSessionId(menuOpenSessionId === s.id ? null : s.id);
+                    }}
+                  >
+                    ...
+                  </button>
+                  {menuOpenSessionId === s.id && (
+                    <div className="session-menu">
+                      <div
+                        className="session-menu-item"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setNewTitle(s.title);
+                          setEditingSessionId(s.id);
+                          setMenuOpenSessionId(null);
+                        }}
+                      >
+                        Rename
+                      </div>
+                      <div
+                        className="session-menu-item"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteChat(s.id);
+                          setMenuOpenSessionId(null);
+                        }}
+                      >
+                        Delete
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>
-        </>
+        </div>
       )}
       {/* 左下角Config按钮 */}
       {!collapsed && (
