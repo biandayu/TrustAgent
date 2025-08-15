@@ -1,0 +1,18 @@
+# General
+.DS_Store
+.vscode/
+
+# Node
+ai-chat-desktop/node_modules/
+ai-chat-desktop/dist/
+ai-chat-desktop/npm-debug.log*
+ai-chat-desktop/yarn-error.log*
+
+# Rust / Tauri
+ai-chat-desktop/src-tauri/target/
+ai-chat-desktop/src-tauri/Cargo.lock
+
+# Env files
+.env
+.env.*
+!.env.example

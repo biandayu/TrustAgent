@@ -1,0 +1,25 @@
+{
+    "openai": {
+        "api_key": "YOUR_OPENAI_API_KEY",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4-turbo"
+    },
+    "mcpServers": {
+        "postal-server": {
+            "command": "java",
+            "args": [
+                "-Dspring.ai.mcp.server.stdio=true",
+                "-Dspring.main.web-application-type=none",
+                "-Dlogging.pattern.console=",
+                "-jar",
+                "C:\\Projects\\postal\\target\\postal-0.0.1.jar"
+            ]
+        },
+        "playwright": {
+            "command": "npx.cmd",
+            "args": [
+                "@playwright/mcp@latest"
+            ]
+        }
+    }
+}

@@ -142,7 +142,7 @@ function App() {
       { role: "user", content: trimmedValue, timestamp: Date.now() },
     ]);
     try {
-      const reply = await safeInvoke("send_message_to_openai", { message: trimmedValue });
+      const reply = await safeInvoke("run_agent_task", { message: trimmedValue });
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: reply as string, timestamp: Date.now() },

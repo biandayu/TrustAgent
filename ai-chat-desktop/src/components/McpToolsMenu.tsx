@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
+import { listen } from '@tauri-apps/api/event';
 import '../App.css';
 
 // --- Interfaces matching Rust structs ---
@@ -28,6 +29,7 @@ const McpToolsMenu: React.FC = () => {
   // --- Data Fetching from Backend ---
   const loadServerStatus = async () => {
     try {
+      console.log('Refreshing MCP server status...');
       const serverList = await invoke('get_mcp_servers');
       setServers(serverList as McpServerInfo[]);
     } catch (error) {
@@ -35,23 +37,36 @@ const McpToolsMenu: React.FC = () => {
     }
   };
 
+  // --- Component Lifecycle & Event Listeners ---
   useEffect(() => {
+    // Initial load
     loadServerStatus();
+
+    // Listen for status changes from the backend
+    const unlisten = listen('mcp_server_status_changed', (event) => {
+      console.log('Received mcp_server_status_changed event:', event);
+      loadServerStatus();
+    });
+
+    // Cleanup listener on component unmount
+    return () => {
+      unlisten.then(f => f());
+    };
   }, []);
+
 
   // --- Event Handlers ---
   const handleStartServer = async (serverName: string) => {
     setIsLoading((prev) => ({ ...prev, [serverName]: true }));
     try {
       await invoke('start_mcp_server', { serverName });
+      // No need to manually update state, the event listener will handle it.
       const tools = await invoke('get_discovered_tools', { serverName });
       setDiscoveredTools((prev) => ({ ...prev, [serverName]: tools as McpTool[] }));
-      setServers((prev) =>
-        prev.map((s) => (s.name === serverName ? { ...s, status: 'running' } : s))
-      );
     } catch (error) {
       console.error(`Failed to start server ${serverName}:`, error);
       alert(`Error starting server ${serverName}: ${error}`);
+      loadServerStatus(); // Refresh state on error to ensure consistency
     } finally {
       setIsLoading((prev) => ({ ...prev, [serverName]: false }));
     }
@@ -61,18 +76,19 @@ const McpToolsMenu: React.FC = () => {
     setIsLoading((prev) => ({ ...prev, [serverName]: true }));
     try {
       await invoke('stop_mcp_server', { serverName });
-      setServers((prev) =>
-        prev.map((s) => (s.name === serverName ? { ...s, status: 'stopped' } : s))
-      );
+      // No need to manually update state, the event listener will handle it.
       setDiscoveredTools((prev) => {
         const newState = { ...prev };
         delete newState[serverName];
         return newState;
       });
-      setSelectedServerName(null); // Go back to server list if this one was selected
+      if (selectedServerName === serverName) {
+        setSelectedServerName(null); // Go back to server list if this one was selected
+      }
     } catch (error) {
       console.error(`Failed to stop server ${serverName}:`, error);
       alert(`Error stopping server ${serverName}: ${error}`);
+      loadServerStatus(); // Refresh state on error to ensure consistency
     } finally {
       setIsLoading((prev) => ({ ...prev, [serverName]: false }));
     }

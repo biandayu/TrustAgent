@@ -16,7 +16,10 @@
     "bundle": {
       "active": true,
       "targets": "all",
-      "identifier": "com.trustagent.aichat"
+      "identifier": "com.trustagent.aichat",
+      "icon": [
+        "icons/icon.ico"
+      ]
     },
     "security": {
       "csp": null

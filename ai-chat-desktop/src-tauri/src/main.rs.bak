@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{App, Manager, State, Window};
 use tracing::{error, info, warn};
 use uuid::Uuid;
-
+use rmcp::{Peer, RoleClient};
 
 // --- Configuration Structures ---
 
@@ -362,43 +362,16 @@ async fn _start_mcp_server_logic(
         // Try to read the last part of the stderr log file again
         let log_tail = read_last_lines_of_file(&log_path, 20).unwrap_or_else(|_| "Failed to read log file".to_string());
         if !log_tail.trim().is_empty() {
-            error!(server_name = %server_name, "Last lines of stderr log:\n{}", log_tail);
+            error!(server_name = %server_name, \"Last lines of stderr log:\n{}\", log_tail);
         } else {
-            error!(server_name = %server_name, "Stderr log file is empty or could not be read.");
+            error!(server_name = %server_name, \"Stderr log file is empty or could not be read.\");
         }
         
-        format!("MCP connection to '{}' failed: {}. Log tail: {}", server_name, e, log_tail)
+        format!(\"MCP connection to '{}' failed: {}. Log tail: {}\", server_name, e, log_tail)
     })?;
 
     let connect_duration = connect_start.elapsed();
-    info!(server_name = %server_name, "MCP connection established in {:?}", connect_duration);
-    
-    // --- Post-connection checks ---
-    info!(server_name = %server_name, "Performing post-connection checks...");
-    
-    // 1. List tools to verify the connection is alive and functional
-    info!(server_name = %server_name, "Listing tools to verify connection...");
-    let tools_start = std::time::Instant::now();
-    
-    // List tools before storing the running_service
-    let tools_result = running_service
-        .list_tools(None::<PaginatedRequestParam>)
-        .await
-        .map_err(|e| {
-            let tools_duration = tools_start.elapsed();
-            error!(server_name = %server_name, "Failed to list tools after {:?}: {}", tools_duration, e);
-            
-            // Try to read the last part of the stderr log file again
-            let log_tail = read_last_lines_of_file(&log_path, 20).unwrap_or_else(|_| "Failed to read log file".to_string());
-            if !log_tail.trim().is_empty() {
-                error!(server_name = %server_name, "Last lines of stderr log:\n{}", log_tail);
-            } else {
-                error!(server_name = %server_name, "Stderr log file is empty or could not be read.");
-            }
-            
-            format!("Failed to list tools for '{}': {}. Log tail: {}", server_name, e, log_tail)
-        })?;
-    let tools_duration = tools_start.elapsed();
+    info!(server_name = %server_name, \"MCP connection established in {:?}\", connect_duration);
     
     // Store the RunningService in the state for later use by the agent
     // The RunningService itself is moved into the HashMap. 
@@ -408,6 +381,33 @@ async fn _start_mcp_server_logic(
         .lock()
         .unwrap()
         .insert(server_name.clone(), Arc::new(running_service));
+
+    // --- Post-connection checks ---
+    info!(server_name = %server_name, \"Performing post-connection checks...\");
+    
+    // 1. List tools to verify the connection is alive and functional
+    // We need to get the Peer from the RunningService to call list_tools
+    info!(server_name = %server_name, \"Listing tools to verify connection...\");
+    let tools_start = std::time::Instant::now();
+    // Use `running_service.as_ref()` to get `&Peer<RoleClient>`
+    let tools_result = running_service.as_ref() // Get &Peer<RoleClient> from RunningService
+        .list_tools(None::<PaginatedRequestParam>)
+        .await
+        .map_err(|e| {
+            let tools_duration = tools_start.elapsed();
+            error!(server_name = %server_name, \"Failed to list tools after {:?}: {}\", tools_duration, e);
+            
+            // Try to read the last part of the stderr log file again
+            let log_tail = read_last_lines_of_file(&log_path, 20).unwrap_or_else(|_| \"Failed to read log file\".to_string());
+            if !log_tail.trim().is_empty() {
+                error!(server_name = %server_name, \"Last lines of stderr log:\n{}\", log_tail);
+            } else {
+                error!(server_name = %server_name, \"Stderr log file is empty or could not be read.\");
+            }
+            
+            format!(\"Failed to list tools for '{}': {}. Log tail: {}\", server_name, e, log_tail)
+        })?
+    let tools_duration = tools_start.elapsed();
      
     let tool_names = tools_result
         .tools
@@ -641,7 +641,8 @@ fn read_last_lines_of_file(path: &std::path::Path, n: usize) -> Result<String, s
     }
     
     let start = if lines.len() > n { lines.len() - n } else { 0 };
-    Ok(lines[start..].join("\n"))
+    Ok(lines[start..].join("
+"))
 }
 
 fn setup_logging() {
