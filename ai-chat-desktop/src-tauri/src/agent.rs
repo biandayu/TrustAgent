@@ -261,7 +261,7 @@ impl Agent {
             }
             
             info!("LLM provided a final answer.");
-            return Ok(assistant_message);
+            return Ok(format!("```\n{}\n```", assistant_message));
         }
 
         Err("Agent exceeded maximum iterations.".to_string())

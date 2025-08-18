@@ -6,9 +6,16 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { tomorrow } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
+// IMPORTANT: For syntax highlighting to work, ensure you have imported a Prism.js theme's CSS.
+// For example, in your main CSS file (e.g., App.css or index.css), you might add:
+// @import 'prismjs/themes/prism-tomorrow.css';
+// Or directly import it in your main JS/TS file if your build system supports it.
+
 interface SmartContentRendererProps {
   content: string;
 }
+
+
 
 const SmartContentRenderer: React.FC<SmartContentRendererProps> = ({ content }) => {
   // Detect content format
@@ -47,7 +54,10 @@ const SmartContentRenderer: React.FC<SmartContentRendererProps> = ({ content }) 
       return 'markdown';
     }
     
-    return 'text';
+    // FIX: If no specific format is detected, assume it's Markdown by default.
+    // This ensures ReactMarkdown attempts to render even simple text,
+    // which might contain subtle Markdown or just benefit from ReactMarkdown's default rendering.
+    return 'markdown'; // Changed from 'text'
   };
 
   const format = detectFormat(content);
