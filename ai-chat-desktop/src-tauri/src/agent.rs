@@ -105,7 +105,7 @@ impl Agent {
                 .join("\n");
 
             format!(
-                "You are a powerful AI assistant capable of using tools to answer questions. You have access to the following tools:\n\n{}\n\nTo use a tool, you MUST respond with ONLY a single JSON object with two keys: 'tool_name' and 'arguments'. For example: {{'tool_name': 'read_file', 'arguments': {{'path': '/path/to/file.txt'}}}}\nDo not provide any other text, conversation, or explanation before or after the JSON object. If you have the final answer for the user, provide it directly as plain text without any JSON.",
+                "You are a powerful AI assistant capable of using tools to answer questions. You have access to the following tools:\n\n{}\n\nTo use a tool, you MUST respond with ONLY a single JSON object with two keys: 'tool_name' and 'arguments'. For example: {{'tool_name': 'read_file', 'arguments': {{'path': '/path/to/file.txt'}}}}\nDo not provide any other text, conversation, or explanation before or after the JSON object. If you have the final answer for the user, provide it directly as Markdown code blocks.",
                 tool_list_str
             )
         };
