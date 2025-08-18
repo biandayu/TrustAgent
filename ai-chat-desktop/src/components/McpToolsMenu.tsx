@@ -125,7 +125,7 @@ const McpToolsMenu: React.FC<Props> = ({ activeTools, onToggleTool }) => {
             <input 
               type="checkbox" 
               className="tool-checkbox"
-              checked={activeTools.includes(toolName)}
+              checked={true}
               onChange={() => onToggleTool(toolName)}
             />
             <span className="tool-name">{toolName}</span>

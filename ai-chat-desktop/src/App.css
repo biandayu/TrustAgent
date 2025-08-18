@@ -44,3 +44,18 @@
 .server-name {
   margin-right: 8px; /* Space between name and badge */
 }
+
+.mcp-menu-item.tool-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px; /* Consistent with server-item padding */
+  cursor: pointer;
+}
+
+.mcp-menu-item.tool-item:hover {
+  background-color: #f3f4f6; /* Consistent with server-item hover */
+}
+
+.tool-checkbox {
+  margin-right: 8px; /* Space between checkbox and tool name */
+}
