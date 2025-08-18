@@ -181,6 +181,13 @@ function App() {
     const trimmedValue = inputValue.trim();
     if (!trimmedValue || isLoading) return;
 
+    // Proactively ensure there's an active session
+    if (!currentSessionId) {
+        // If no session is active, create a new one
+        await handleNewChat(); // This will create a new session and set it as active
+        // After handleNewChat, currentSessionId will be set.
+    }
+
     setInputValue("");
     setIsLoading(true);
     setAgentStatus(null); // Reset status on new message
