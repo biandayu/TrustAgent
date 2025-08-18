@@ -1,3 +1,46 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+.tool-count-badge {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 24px; /* Adjust as needed for desired circle size */
+  height: 24px; /* Adjust as needed for desired circle size */
+  border-radius: 50%;
+  font-size: 0.75rem; /* Adjust as needed */
+  font-weight: bold;
+  color: white;
+  margin-left: auto; /* Pushes the badge to the right */
+}
+
+.tool-count-badge.active {
+  background-color: #22c55e; /* Green-500 from Tailwind */
+}
+
+.tool-count-badge.inactive {
+  background-color: #6b7280; /* Gray-500 from Tailwind */
+}
+
+.server-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.server-item:hover {
+  background-color: #f3f4f6; /* Light gray for hover effect */
+}
+
+.server-info {
+  display: flex;
+  align-items: center;
+  flex-grow: 1; /* Allows server name to take available space */
+}
+
+.server-name {
+  margin-right: 8px; /* Space between name and badge */
+}

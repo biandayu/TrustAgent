@@ -26,8 +26,6 @@ const McpToolsMenu: React.FC<Props> = ({ activeTools, onToggleTool }) => {
   const [servers, setServers] = useState<McpServerInfo[]>([]);
   // FIX: The state should hold a record of server names to their tool name strings.
   const [discoveredTools, setDiscoveredTools] = useState<Record<string, string[]>>({});
-  const [isLoading, setIsLoading] = useState<Record<string, boolean>>({});
-
   const menuRef = useRef<HTMLDivElement>(null);
 
   // --- Data Fetching ---
@@ -36,14 +34,12 @@ const McpToolsMenu: React.FC<Props> = ({ activeTools, onToggleTool }) => {
     try {
       const serverList = (await invoke("get_mcp_servers")) as McpServerInfo[];
       setServers(serverList);
-      // --- FIX ---
       // If servers are already running on startup, fetch their tools automatically.
       serverList.forEach((server) => {
         if (server.status === "running") {
           fetchToolsForServer(server.name);
         }
       });
-      // --- END FIX ---
     } catch (error) {
       console.error("Failed to load MCP servers:", error);
     }
@@ -51,7 +47,6 @@ const McpToolsMenu: React.FC<Props> = ({ activeTools, onToggleTool }) => {
 
   const fetchToolsForServer = async (serverName: string) => {
     try {
-        // FIX: The backend returns string[], so we cast to that.
         const tools = await invoke('get_discovered_tools', { serverName });
         setDiscoveredTools((prev) => ({ ...prev, [serverName]: tools as string[] }));
     } catch (error) {
@@ -87,43 +82,6 @@ const McpToolsMenu: React.FC<Props> = ({ activeTools, onToggleTool }) => {
 
   // --- Event Handlers ---
 
-  const handleStartServer = async (serverName: string) => {
-    setIsLoading((prev) => ({ ...prev, [serverName]: true }));
-    try {
-      await invoke('start_mcp_server', { serverName });
-      // Status change listener will trigger a refresh
-      await fetchToolsForServer(serverName);
-    } catch (error) {
-      console.error(`Failed to start server ${serverName}:`, error);
-      alert(`Error starting server ${serverName}: ${error}`);
-      loadServerStatus();
-    } finally {
-      setIsLoading((prev) => ({ ...prev, [serverName]: false }));
-    }
-  };
-
-  const handleStopServer = async (serverName: string) => {
-    setIsLoading((prev) => ({ ...prev, [serverName]: true }));
-    try {
-      await invoke('stop_mcp_server', { serverName });
-      // Status change listener will trigger a refresh
-      setDiscoveredTools((prev) => {
-        const newState = { ...prev };
-        delete newState[serverName];
-        return newState;
-      });
-      if (selectedServerName === serverName) {
-        setSelectedServerName(null);
-      }
-    } catch (error) {
-      console.error(`Failed to stop server ${serverName}:`, error);
-      alert(`Error stopping server ${serverName}: ${error}`);
-      loadServerStatus();
-    } finally {
-      setIsLoading((prev) => ({ ...prev, [serverName]: false }));
-    }
-  };
-
   const handleServerClick = (server: McpServerInfo) => {
     if (server.status !== 'running') return;
     // If tools for this server haven't been fetched yet, fetch them now.
@@ -139,21 +97,12 @@ const McpToolsMenu: React.FC<Props> = ({ activeTools, onToggleTool }) => {
     <div className="mcp-menu-content">
       {servers.map((server) => {
         const toolCount = discoveredTools[server.name]?.length ?? 0;
-        const serverIsLoading = isLoading[server.name];
         return (
           <div key={server.name} className="mcp-menu-item server-item">
             <div className="server-info" onClick={() => handleServerClick(server)}>
-                <span className={`status-indicator ${server.status}`}></span>
                 <span className="server-name">{server.name}</span>
-                {server.status === 'running' && <span className="tool-count-badge">{toolCount}</span>}
+                <span className={`tool-count-badge ${server.status === 'running' ? 'active' : 'inactive'}`}>{toolCount}</span>
             </div>
-            <button
-              className={`server-action-btn ${server.status}`}
-              onClick={() => server.status === 'running' ? handleStopServer(server.name) : handleStartServer(server.name)}
-              disabled={serverIsLoading}
-            >
-              {serverIsLoading ? '...' : (server.status === 'running' ? 'Stop' : 'Start')}
-            </button>
           </div>
         );
       })}
