@@ -138,8 +138,8 @@ impl Agent {
             }
         }
 
-        const MAX_ITERATIONS: u32 = 5;
-        const CONTEXT_WINDOW_SIZE: usize = 10;
+        const MAX_ITERATIONS: u32 = 20;
+        const CONTEXT_WINDOW_SIZE: usize = 20;
 
         for i in 0..MAX_ITERATIONS {
             info!(iteration = i + 1, "Agent loop iteration");

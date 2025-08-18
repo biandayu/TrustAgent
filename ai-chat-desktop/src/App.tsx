@@ -73,10 +73,13 @@ function App() {
         setSessions(loadedSessions);
 
         if (loadedSessions.length > 0) {
-          // FIX: Instead of just setting state, call the handler that syncs with the backend.
           await handleSelectSession(loadedSessions[0].id);
         } else {
-          await handleNewChat();
+          // If no sessions exist, create one directly here
+          const newSession = (await safeInvoke("finalize_and_new_chat")) as ChatSession;
+          setCurrentSessionId(newSession.id);
+          setMessages(newSession.messages || []);
+          setSessions([newSession]); // Initialize sessions with just this new one
         }
       } catch (error) {
         console.error("Error initializing app:", error);
@@ -98,15 +101,21 @@ function App() {
 
   const handleNewChat = async () => {
     try {
-      // 1. Backend creates a new session and returns it.
-      const newSession = (await safeInvoke("finalize_and_new_chat")) as ChatSession;
+      // Check if the current session is empty and titled "New Chat"
+      if (currentSessionId) {
+          const currentSession = sessions.find(s => s.id === currentSessionId);
+          if (currentSession && currentSession.messages.length === 0 && currentSession.title === "New Chat") {
+              // If it's an empty "New Chat", just select it again (no-op effectively)
+              await handleSelectSession(currentSessionId);
+              return;
+          }
+      }
 
-      // 2. Update frontend state with the new session.
+      // Otherwise, create a new session
+      const newSession = (await safeInvoke("finalize_and_new_chat")) as ChatSession;
       setCurrentSessionId(newSession.id);
       setMessages(newSession.messages || []);
-
-      // 3. Add the new session to the list of all sessions.
-      setSessions((prev) => [newSession, ...prev]);
+      setSessions((prev) => [newSession, ...prev]); // Add the new session to the top of the list
 
     } catch (error) {
       console.error("Failed to create new chat:", error);

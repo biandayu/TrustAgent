@@ -47,7 +47,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             {sessions.map((s) => (
               <div
                 key={s.id}
-                className={`group relative flex justify-between items-center py-2 px-3 rounded-md mb-1 cursor-pointer text-sm text-gray-300 transition-colors duration-200 ease-in-out hover:bg-gray-800 hover:text-white ${s.id === currentSessionId ? "bg-gradient-to-r from-blue-600 to-purple-700 text-white font-bold" : ""}`} // Missing backtick was here
+                className={`group relative flex justify-between items-center py-2 px-3 rounded-md mb-1 cursor-pointer text-sm text-gray-300 transition-colors duration-200 ease-in-out hover:bg-gray-800 hover:text-white ${s.id === currentSessionId ? "bg-blue-700 text-white font-bold" : ""}`} // Missing backtick was here
                 onClick={editingSessionId === s.id ? undefined : () => onSelect(s.id)}
                 title={s.title}
               >
