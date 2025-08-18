@@ -647,9 +647,7 @@ async fn finalize_and_new_chat(state: State<'_, Arc<AppState>>) -> Result<ChatSe
             delete_session_file(&old_id)?;
         } else {
             if let Some(session) = sessions.get_mut(&old_id) {
-                if session.title == "New Chat" {
-                    session.title = generate_session_title(&session.messages);
-                }
+                session.title = generate_session_title(&session.messages);
                 session.updated_at = now_ts();
                 save_session_to_file(session)?;
             }
@@ -685,9 +683,7 @@ async fn select_session(
                 sessions.remove(&old_id);
             } else {
                 if let Some(old_session) = sessions.get_mut(&old_id) {
-                    if old_session.title == "New Chat" {
-                        old_session.title = generate_session_title(&old_session.messages);
-                    }
+                    old_session.title = generate_session_title(&old_session.messages);
                     old_session.updated_at = now_ts();
                     save_session_to_file(old_session)?;
                 }

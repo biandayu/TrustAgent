@@ -113,9 +113,10 @@ function App() {
 
       // Otherwise, create a new session
       const newSession = (await safeInvoke("finalize_and_new_chat")) as ChatSession;
+      // After backend has finalized old session and created new one, reload all sessions
+      await loadSessions();
       setCurrentSessionId(newSession.id);
       setMessages(newSession.messages || []);
-      setSessions((prev) => [newSession, ...prev]); // Add the new session to the top of the list
 
     } catch (error) {
       console.error("Failed to create new chat:", error);
