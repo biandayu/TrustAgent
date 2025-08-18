@@ -269,7 +269,7 @@ function App() {
         onRenameChat={handleRenameChat}
         onDeleteChat={handleDeleteChat}
       />
-      <div className="flex flex-col flex-1">
+      <div className="flex flex-col flex-1 overflow-x-hidden">
         <div className="flex-1 overflow-y-auto p-4" ref={messagesEndRef}>
           {messages.map((message, idx) => (
             <div
@@ -283,7 +283,7 @@ function App() {
               {message.role === "assistant" || message.role === "bot" ? (
                 <SmartContentRenderer content={message.content} />
               ) : (
-                <div className="text-white font-medium leading-relaxed">{message.content}</div>
+                <div className="text-white font-medium leading-relaxed overflow-wrap-break-word break-words">{message.content}</div>
               )}
             </div>
           ))}
