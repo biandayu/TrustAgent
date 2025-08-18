@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^1.5.11",
+    "@types/prismjs": "^1.26.5",
     "@types/react": "^18.2.15",
     "@types/react-dom": "^18.2.7",
     "@vitejs/plugin-react": "^4.2.1",

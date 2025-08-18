@@ -2,6 +2,83 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Import Prism.js syntax highlighting styles */
+@import 'prismjs/themes/prism-tomorrow.css';
+
+/* Custom markdown rendering styles */
+.markdown-renderer {
+  @apply text-gray-200;
+}
+
+.markdown-renderer h1 {
+  @apply text-3xl font-bold mt-6 mb-4 text-white;
+}
+
+.markdown-renderer h2 {
+  @apply text-2xl font-bold mt-5 mb-3 text-white;
+}
+
+.markdown-renderer h3 {
+  @apply text-xl font-bold mt-4 mb-2 text-white;
+}
+
+.markdown-renderer p {
+  @apply my-3;
+}
+
+.markdown-renderer ul {
+  @apply list-disc list-inside my-2;
+}
+
+.markdown-renderer ol {
+  @apply list-decimal list-inside my-2;
+}
+
+.markdown-renderer li {
+  @apply my-1;
+}
+
+.markdown-renderer a {
+  @apply text-blue-400 hover:underline;
+}
+
+.markdown-renderer blockquote {
+  @apply border-l-4 border-gray-500 pl-4 italic my-4 text-gray-300;
+}
+
+.markdown-renderer code {
+  @apply bg-gray-700 rounded px-1 py-0.5 text-sm;
+}
+
+.markdown-renderer pre {
+  @apply bg-gray-800 rounded-lg p-4 my-4 overflow-x-auto;
+}
+
+.markdown-renderer pre code {
+  @apply bg-transparent p-0 rounded-none;
+}
+
+.markdown-renderer .table-container {
+  @apply overflow-x-auto my-4;
+}
+
+.markdown-renderer .markdown-table {
+  @apply min-w-full border-collapse;
+}
+
+.markdown-renderer .markdown-table th,
+.markdown-renderer .markdown-table td {
+  @apply border border-gray-600 p-2;
+}
+
+.markdown-renderer .markdown-table th {
+  @apply bg-gray-700 text-white;
+}
+
+.markdown-renderer .markdown-table tr:nth-child(even) {
+  @apply bg-gray-800;
+}
+
 .tool-count-badge {
   display: inline-flex;
   justify-content: center;

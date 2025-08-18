@@ -15,8 +15,6 @@ interface SmartContentRendererProps {
   content: string;
 }
 
-
-
 const SmartContentRenderer: React.FC<SmartContentRendererProps> = ({ content }) => {
   // Detect content format
   const detectFormat = (text: string): 'markdown' | 'json' | 'xml' | 'html' | 'code' | 'text' => {
@@ -43,7 +41,12 @@ const SmartContentRenderer: React.FC<SmartContentRendererProps> = ({ content }) 
       return 'html';
     }
     
-    // Detect code blocks
+    // Detect fenced code blocks with language identifiers
+    if (/^```[a-zA-Z]*\n[\s\S]*\n```$/.test(trimmed)) {
+      return 'markdown';
+    }
+    
+    // Detect inline code or code blocks
     if (trimmed.includes('```') || trimmed.includes('`')) {
       return 'markdown';
     }
@@ -138,6 +141,14 @@ const SmartContentRenderer: React.FC<SmartContentRendererProps> = ({ content }) 
 
   // Render Markdown
   if (format === 'markdown') {
+    // Process content to remove leading/trailing code block markers with language identifiers
+    let processedContent = content;
+    const codeBlockRegex = /^```[a-zA-Z]*\n([\s\S]*?)\n```$/;
+    const match = content.trim().match(codeBlockRegex);
+    if (match) {
+      processedContent = match[1];
+    }
+    
     return (
       <div className="markdown-renderer">
         <ReactMarkdown
@@ -177,10 +188,20 @@ const SmartContentRenderer: React.FC<SmartContentRendererProps> = ({ content }) 
                   </table>
                 </div>
               );
-            }
+            },
+            // Add styling for other markdown elements
+            h1: ({node, ...props}) => <h1 className="text-3xl font-bold mt-6 mb-4 text-white">{props.children}</h1>,
+            h2: ({node, ...props}) => <h2 className="text-2xl font-bold mt-5 mb-3 text-white">{props.children}</h2>,
+            h3: ({node, ...props}) => <h3 className="text-xl font-bold mt-4 mb-2 text-white">{props.children}</h3>,
+            p: ({node, ...props}) => <p className="my-3">{props.children}</p>,
+            ul: ({node, ...props}) => <ul className="list-disc list-inside my-2">{props.children}</ul>,
+            ol: ({node, ...props}) => <ol className="list-decimal list-inside my-2">{props.children}</ol>,
+            li: ({node, ...props}) => <li className="my-1">{props.children}</li>,
+            a: ({node, ...props}) => <a className="text-blue-400 hover:underline" {...props} />,
+            blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-gray-500 pl-4 italic my-4 text-gray-300">{props.children}</blockquote>,
           }}
         >
-          {content}
+          {processedContent}
         </ReactMarkdown>
       </div>
     );
