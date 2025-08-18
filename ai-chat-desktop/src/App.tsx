@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 import { listen } from "@tauri-apps/api/event";
 import SmartContentRenderer from "./components/SmartContentRenderer";
@@ -44,6 +44,14 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [activeTools, setActiveTools] = useState<string[]>([]);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollTop = messagesEndRef.current.scrollHeight;
+    }
+  }, [messages]);
 
   const safeInvoke = async (cmd: string, args?: any) => {
     if (typeof window.__TAURI_IPC__ !== "undefined") {
@@ -262,7 +270,7 @@ function App() {
         onDeleteChat={handleDeleteChat}
       />
       <div className="flex flex-col flex-1">
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-4" ref={messagesEndRef}>
           {messages.map((message, idx) => (
             <div
               key={idx}
