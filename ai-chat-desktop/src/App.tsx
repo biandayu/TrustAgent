@@ -1,9 +1,12 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
+import { listen } from "@tauri-apps/api/event";
 import SmartContentRenderer from "./components/SmartContentRenderer";
 import Sidebar from "./components/Sidebar";
 import "./App.css"; // Keep this import for now, even if empty
 import McpToolsMenu from "./components/McpToolsMenu";
+
+// --- TypeScript Interfaces ---
 
 interface ChatMessage {
   role: string;
@@ -19,6 +22,19 @@ interface ChatSession {
   updated_at: number;
 }
 
+interface AgentStatus {
+  type: "thinking" | "using_tool";
+  data?: {
+    tool_name: string;
+  };
+}
+
+interface AgentEvent {
+  status: AgentStatus | null;
+}
+
+// --- Main App Component ---
+
 function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
@@ -26,6 +42,8 @@ function App() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
+  const [activeTools, setActiveTools] = useState<string[]>([]);
 
   const safeInvoke = async (cmd: string, args?: any) => {
     if (typeof window.__TAURI_IPC__ !== "undefined") {
@@ -36,55 +54,70 @@ function App() {
     }
   };
 
-  // 加载所有会话列表
+  // --- Session Management ---
+
   const loadSessions = async () => {
     try {
       const list = await safeInvoke("get_all_sessions");
-      console.log("loadSessions: Received list from backend:", list); // Debugging line
       setSessions(list as ChatSession[]);
-      console.log("loadSessions: Sessions after setSessions:", list); // Debugging line
     } catch (error) {
-      console.error("loadSessions: Error loading sessions:", error); // Catch and log errors
-      setSessions([]); // Ensure sessions is empty on error
-    }
-  };
-
-  // 加载当前会话内容
-  const loadCurrentSession = async () => {
-    try {
-      const session = await safeInvoke("get_current_session");
-      const s = session as any;
-      setCurrentSessionId(s.id);
-      setMessages(s.messages || []);
-    } catch {
-      setMessages([]);
-      setCurrentSessionId(null);
+      console.error("Error loading sessions:", error);
+      setSessions([]);
     }
   };
 
   useEffect(() => {
-    loadSessions();
-    loadCurrentSession();
+    const initializeApp = async () => {
+      try {
+        const loadedSessions = (await safeInvoke("get_all_sessions")) as ChatSession[];
+        setSessions(loadedSessions);
+
+        if (loadedSessions.length > 0) {
+          // FIX: Instead of just setting state, call the handler that syncs with the backend.
+          await handleSelectSession(loadedSessions[0].id);
+        } else {
+          await handleNewChat();
+        }
+      } catch (error) {
+        console.error("Error initializing app:", error);
+        alert(`Failed to initialize the application: ${error}`);
+      }
+    };
+
+    initializeApp();
+
+    const unlisten = listen<AgentEvent>("agent_event", (event) => {
+      console.log("Received agent_event:", event.payload);
+      setAgentStatus(event.payload.status);
+    });
+
+    return () => {
+      unlisten.then((f) => f());
+    };
   }, []);
 
-  // 新建会话
   const handleNewChat = async () => {
     try {
-      await safeInvoke("finalize_and_new_chat");
-      await loadSessions();
-      await loadCurrentSession();
+      // 1. Backend creates a new session and returns it.
+      const newSession = (await safeInvoke("finalize_and_new_chat")) as ChatSession;
+
+      // 2. Update frontend state with the new session.
+      setCurrentSessionId(newSession.id);
+      setMessages(newSession.messages || []);
+
+      // 3. Add the new session to the list of all sessions.
+      setSessions((prev) => [newSession, ...prev]);
+
     } catch (error) {
       console.error("Failed to create new chat:", error);
       alert(`Error creating new chat: ${error}`);
     }
   };
 
-  // 切换会话
   const handleSelectSession = async (id: string) => {
     try {
       const new_session = await safeInvoke("select_session", { idToSelect: id });
-      await loadSessions(); // 重新加载会话列表以更新标题
-      // 使用返回的数据更新当前会话视图
+      await loadSessions();
       const s = new_session as ChatSession;
       setCurrentSessionId(s.id);
       setMessages(s.messages || []);
@@ -94,60 +127,69 @@ function App() {
     }
   };
 
-  // 重命名会话
   const handleRenameChat = async (id: string, newTitle: string) => {
     try {
-      console.log("handleRenameChat: Attempting to rename session:", id, "to", newTitle); // Debugging line
       await safeInvoke("rename_session", { id, newTitle });
-      console.log("handleRenameChat: Session renamed successfully."); // Debugging line
       await loadSessions();
       if (id === currentSessionId) {
-        // If the current session was renamed, update its title in the view
         setSessions((prev) =>
           prev.map((s) => (s.id === id ? { ...s, title: newTitle } : s))
         );
       }
     } catch (error) {
-      console.error("handleRenameChat: Failed to rename session:", error); // Catch and log errors
+      console.error("Failed to rename session:", error);
       alert(`Error renaming session: ${error}`);
     }
   };
 
-  // 删除会话
   const handleDeleteChat = async (id: string) => {
     try {
-      console.log("handleDeleteChat: Attempting to delete session:", id); // Debugging line
       await safeInvoke("delete_session", { id });
-      console.log("handleDeleteChat: Session deleted successfully."); // Debugging line
       await loadSessions();
       if (id === currentSessionId) {
-        // If the current session was deleted, reset current session
         setCurrentSessionId(null);
         setMessages([]);
       }
     } catch (error) {
-      console.error("handleDeleteChat: Failed to delete session:", error); // Catch and log errors
+      console.error("Failed to delete session:", error);
       alert(`Error deleting session: ${error}`);
     }
   };
 
-  // 发送消息
+  // --- Tool Management ---
+  const handleToggleTool = (toolName: string) => {
+    setActiveTools((prev) =>
+      prev.includes(toolName)
+        ? prev.filter((t) => t !== toolName)
+        : [...prev, toolName]
+    );
+  };
+
+  // --- Message Handling ---
+
   const handleSendMessage = async () => {
     const trimmedValue = inputValue.trim();
     if (!trimmedValue || isLoading) return;
+
     setInputValue("");
     setIsLoading(true);
+    setAgentStatus(null); // Reset status on new message
+
     setMessages((prev) => [
       ...prev,
       { role: "user", content: trimmedValue, timestamp: Date.now() },
     ]);
+
     try {
-      const reply = await safeInvoke("run_agent_task", { message: trimmedValue });
+      const reply = await safeInvoke("run_agent_task", { 
+        message: trimmedValue,
+        activeTools: activeTools,
+      });
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: reply as string, timestamp: Date.now() },
       ]);
-      await loadSessions();
+      await loadSessions(); // To update title if it was a new chat
     } catch (error) {
       setMessages((prev) => [
         ...prev,
@@ -155,6 +197,7 @@ function App() {
       ]);
     } finally {
       setIsLoading(false);
+      setAgentStatus(null); // Clear status when done
     }
   };
 
@@ -165,9 +208,27 @@ function App() {
     }
   };
 
-  // 左下角Config按钮回调
   const handleConfigOpenAI = () => {
     safeInvoke("open_config_file").catch(console.error);
+  };
+
+  // --- Render Logic ---
+
+  const renderAgentStatus = () => {
+    if (!isLoading || !agentStatus) return null;
+
+    let statusText = "";
+    if (agentStatus.type === "thinking") {
+      statusText = "Thinking...";
+    } else if (agentStatus.type === "using_tool") {
+      statusText = `Using tool: ${agentStatus.data?.tool_name}...`;
+    }
+
+    return (
+      <div className="text-center text-xs text-gray-400 pb-2 animate-pulse">
+        {statusText}
+      </div>
+    );
   };
 
   return (
@@ -202,24 +263,30 @@ function App() {
             </div>
           ))}
         </div>
-        <div className="p-4 bg-gray-900 flex items-center space-x-3 border-t border-gray-700 backdrop-blur-md">
-          <McpToolsMenu />
-          <input
-            type="text"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="💬 Type your message... Try requesting JSON, Markdown, HTML, or XML content"
-            disabled={isLoading}
-            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white placeholder-gray-400 transition-all duration-300 ease-in-out disabled:opacity-60 disabled:cursor-not-allowed"
-          />
-          <button
-            onClick={handleSendMessage}
-            disabled={isLoading || !inputValue.trim()}
-            className="px-5 py-3 rounded-lg bg-gradient-to-r from-blue-600 to-purple-700 text-white font-semibold cursor-pointer transition-all duration-300 ease-in-out shadow-lg shadow-blue-500/30 hover:from-blue-700 hover:to-purple-800 hover:translate-y-[-2px] active:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed disabled:shadow-none disabled:hover:translate-y-0"
-          >
-            {isLoading ? "Sending..." : "Send"}
-          </button>
+        <div className="p-4 bg-gray-900 border-t border-gray-700 backdrop-blur-md">
+          {renderAgentStatus()}
+          <div className="flex items-center space-x-3">
+            <McpToolsMenu 
+              activeTools={activeTools}
+              onToggleTool={handleToggleTool}
+            />
+            <input
+              type="text"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="💬 Type your message... Try requesting JSON, Markdown, HTML, or XML content"
+              disabled={isLoading}
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white placeholder-gray-400 transition-all duration-300 ease-in-out disabled:opacity-60 disabled:cursor-not-allowed"
+            />
+            <button
+              onClick={handleSendMessage}
+              disabled={isLoading || !inputValue.trim()}
+              className="px-5 py-3 rounded-lg bg-gradient-to-r from-blue-600 to-purple-700 text-white font-semibold cursor-pointer transition-all duration-300 ease-in-out shadow-lg shadow-blue-500/30 hover:from-blue-700 hover:to-purple-800 hover:translate-y-[-2px] active:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed disabled:shadow-none disabled:hover:translate-y-0"
+            >
+              {isLoading ? "Sending..." : "Send"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

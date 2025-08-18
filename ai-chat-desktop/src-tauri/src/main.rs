@@ -1,6 +1,7 @@
 #[cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agent;
+mod window;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -425,8 +426,7 @@ async fn _start_mcp_server_logic(
 
     // Notify frontend of the change
     window
-        .emit("mcp_server_status_changed", ())
-        .map_err(|e| e.to_string())?;
+        .emit("mcp_server_status_changed", ()).map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -472,8 +472,7 @@ async fn stop_mcp_server(
     // For now, we just remove it from the list of active tool providers.
     warn!(server_name = %server_name, "Process handle not stored, cannot kill process. Only removing from active list.");
     window
-        .emit("mcp_server_status_changed", ())
-        .map_err(|e| e.to_string())?;
+        .emit("mcp_server_status_changed", ()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -490,11 +489,54 @@ fn get_discovered_tools(
 #[tauri::command]
 async fn run_agent_task(
     message: String,
+    active_tools: Vec<String>,
     state: State<'_, Arc<AppState>>,
+    window: Window,
 ) -> Result<String, String> {
-    info!(%message, "Running agent task");
+    info!(%message, "Running agent task with history");
 
-    // 1. Collect available tools from the state
+    // 1. Get current session and add the new user message
+    let session_id = state.current_session_id.lock().unwrap().clone()
+        .ok_or_else(|| "No active session".to_string())?;
+
+    let history_clone = {
+        let mut sessions = state.sessions.lock().unwrap();
+        let session = sessions.get_mut(&session_id)
+            .ok_or_else(|| "Current session not found in state".to_string())?;
+
+        let user_message = ChatMessage {
+            role: "user".to_string(),
+            content: message.clone(),
+            timestamp: now_ts(),
+        };
+        session.messages.push(user_message);
+
+        // Apply sliding window and potentially summarize old messages
+        let messages_len = session.messages.len();
+        let windowed_history = window::select_context_messages(&session.messages, None);
+        
+        // Optionally get a summary of older messages if we have more than our window
+        if messages_len > windowed_history.len() {
+            // Only summarize messages that aren't in our window
+            let older_messages = &session.messages[..messages_len - windowed_history.len()];
+            if let Some(summary) = window::summarize_old_messages(older_messages) {
+                let summary_msg = ChatMessage {
+                    role: "system".to_string(),
+                    content: format!("Previous conversation summary: {}", summary),
+                    timestamp: now_ts(),
+                };
+                let mut result = vec![summary_msg];
+                result.extend(windowed_history);
+                result
+            } else {
+                windowed_history
+            }
+        } else {
+            windowed_history
+        }
+    }; // MutexGuard is dropped here
+
+    // 2. Collect available tools from the state, filtered by the active_tools list from the frontend
     let available_tools: Vec<agent::Tool> = {
         let mcp_tools_guard = state.mcp_tools.lock().unwrap();
         mcp_tools_guard
@@ -503,20 +545,49 @@ async fn run_agent_task(
                 tools.iter().map(move |tool_name| agent::Tool {
                     server_name: server_name.clone(),
                     tool_name: tool_name.clone(),
-                    // TODO: Eventually, we'll want to get tool descriptions from the MCP server
                     description: format!("A tool named '{}' from server '{}'", tool_name, server_name),
                 })
             })
+            // .filter(|tool| active_tools.contains(&tool.tool_name)) // DIAGNOSTIC: Temporarily disabled filtering
             .collect()
-    }; // The lock guard is dropped here, before the .await point
+    }; // Lock guard is dropped here
 
-    // 2. Create an agent instance and run the task
+    info!("Agent will run with {} active tools: {:?}", available_tools.len(), available_tools.iter().map(|t| &t.tool_name).collect::<Vec<_>>());
+
+    // 3. Create an agent instance and run the task with the whole history
     let agent = agent::Agent::new();
-    let result = agent
-        .run_task(message, available_tools, state.inner().clone())
+    
+    let result: Result<String, String> = agent
+        .run_task(&history_clone, available_tools, state.inner().clone(), &window)
         .await;
 
-    // TODO: Handle saving user and assistant messages to the session
+    // 4. Save the result to the session
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = sessions.get_mut(&session_id)
+        .ok_or_else(|| "Current session not found after agent run".to_string())?;
+
+    match &result {
+        Ok(assistant_content) => {
+            let assistant_message = ChatMessage {
+                role: "assistant".to_string(),
+                content: assistant_content.clone(),
+                timestamp: now_ts(),
+            };
+            session.messages.push(assistant_message);
+        }
+        Err(e) => {
+            // Optionally add an error message to the chat history
+            let error_message = ChatMessage {
+                role: "assistant".to_string(),
+                content: format!("An error occurred: {}", e),
+                timestamp: now_ts(),
+            };
+            session.messages.push(error_message);
+        }
+    }
+    
+    session.updated_at = now_ts();
+    save_session_to_file(session)?;
 
     result
 }
@@ -562,7 +633,7 @@ async fn get_all_sessions(state: State<'_, Arc<AppState>>) -> Result<Vec<ChatSes
 }
 
 #[tauri::command]
-async fn finalize_and_new_chat(state: State<'_, Arc<AppState>>) -> Result<String, String> {
+async fn finalize_and_new_chat(state: State<'_, Arc<AppState>>) -> Result<ChatSession, String> {
     let mut sessions = state.sessions.lock().unwrap();
     let mut current_id_guard = state.current_session_id.lock().unwrap();
 
@@ -573,6 +644,7 @@ async fn finalize_and_new_chat(state: State<'_, Arc<AppState>>) -> Result<String
 
         if is_empty {
             sessions.remove(&old_id);
+            delete_session_file(&old_id)?;
         } else {
             if let Some(session) = sessions.get_mut(&old_id) {
                 if session.title == "New Chat" {
@@ -586,10 +658,13 @@ async fn finalize_and_new_chat(state: State<'_, Arc<AppState>>) -> Result<String
 
     let new_id = Uuid::new_v4().to_string();
     let new_session = ChatSession::new(new_id.clone(), "New Chat".to_string());
-    sessions.insert(new_id.clone(), new_session);
+    sessions.insert(new_id.clone(), new_session.clone());
     *current_id_guard = Some(new_id.clone());
 
-    Ok(new_id)
+    // No need to save the new session to file yet, it's empty.
+    // It will be saved when a message is added.
+
+    Ok(new_session)
 }
 
 #[tauri::command]

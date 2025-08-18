@@ -3,70 +3,100 @@ import { invoke } from '@tauri-apps/api/tauri';
 import { listen } from '@tauri-apps/api/event';
 import '../App.css';
 
-// --- Interfaces matching Rust structs ---
+// --- Interfaces ---
+
 interface McpServerInfo {
   name: string;
   status: 'running' | 'stopped';
 }
 
-interface McpTool {
-  name: string;
-  description: string;
-  // Assuming the schema has these fields, adjust if necessary
-  input_schema: object;
-  output_schema: object;
+// The backend returns a list of tool names (string[]), not complex objects.
+// The McpTool interface was incorrect and has been removed.
+
+interface Props {
+  activeTools: string[];
+  onToggleTool: (toolName: string) => void;
 }
 
-const McpToolsMenu: React.FC = () => {
+// --- Component ---
+
+const McpToolsMenu: React.FC<Props> = ({ activeTools, onToggleTool }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedServerName, setSelectedServerName] = useState<string | null>(null);
   const [servers, setServers] = useState<McpServerInfo[]>([]);
-  const [discoveredTools, setDiscoveredTools] = useState<Record<string, McpTool[]>>({});
+  // FIX: The state should hold a record of server names to their tool name strings.
+  const [discoveredTools, setDiscoveredTools] = useState<Record<string, string[]>>({});
   const [isLoading, setIsLoading] = useState<Record<string, boolean>>({});
 
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // --- Data Fetching from Backend ---
+  // --- Data Fetching ---
+
   const loadServerStatus = async () => {
     try {
-      console.log('Refreshing MCP server status...');
-      const serverList = await invoke('get_mcp_servers');
-      setServers(serverList as McpServerInfo[]);
+      const serverList = (await invoke("get_mcp_servers")) as McpServerInfo[];
+      setServers(serverList);
+      // --- FIX ---
+      // If servers are already running on startup, fetch their tools automatically.
+      serverList.forEach((server) => {
+        if (server.status === "running") {
+          fetchToolsForServer(server.name);
+        }
+      });
+      // --- END FIX ---
     } catch (error) {
       console.error("Failed to load MCP servers:", error);
     }
   };
 
-  // --- Component Lifecycle & Event Listeners ---
+  const fetchToolsForServer = async (serverName: string) => {
+    try {
+        // FIX: The backend returns string[], so we cast to that.
+        const tools = await invoke('get_discovered_tools', { serverName });
+        setDiscoveredTools((prev) => ({ ...prev, [serverName]: tools as string[] }));
+    } catch (error) {
+        console.error(`Failed to fetch tools for ${serverName}:`, error);
+    }
+  }
+
+  // --- Lifecycle & Listeners ---
+
   useEffect(() => {
-    // Initial load
     loadServerStatus();
 
-    // Listen for status changes from the backend
     const unlisten = listen('mcp_server_status_changed', (event) => {
       console.log('Received mcp_server_status_changed event:', event);
       loadServerStatus();
     });
 
-    // Cleanup listener on component unmount
     return () => {
       unlisten.then(f => f());
     };
   }, []);
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+        setSelectedServerName(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // --- Event Handlers ---
+
   const handleStartServer = async (serverName: string) => {
     setIsLoading((prev) => ({ ...prev, [serverName]: true }));
     try {
       await invoke('start_mcp_server', { serverName });
-      // No need to manually update state, the event listener will handle it.
-      const tools = await invoke('get_discovered_tools', { serverName });
-      setDiscoveredTools((prev) => ({ ...prev, [serverName]: tools as McpTool[] }));
+      // Status change listener will trigger a refresh
+      await fetchToolsForServer(serverName);
     } catch (error) {
       console.error(`Failed to start server ${serverName}:`, error);
       alert(`Error starting server ${serverName}: ${error}`);
-      loadServerStatus(); // Refresh state on error to ensure consistency
+      loadServerStatus();
     } finally {
       setIsLoading((prev) => ({ ...prev, [serverName]: false }));
     }
@@ -76,36 +106,46 @@ const McpToolsMenu: React.FC = () => {
     setIsLoading((prev) => ({ ...prev, [serverName]: true }));
     try {
       await invoke('stop_mcp_server', { serverName });
-      // No need to manually update state, the event listener will handle it.
+      // Status change listener will trigger a refresh
       setDiscoveredTools((prev) => {
         const newState = { ...prev };
         delete newState[serverName];
         return newState;
       });
       if (selectedServerName === serverName) {
-        setSelectedServerName(null); // Go back to server list if this one was selected
+        setSelectedServerName(null);
       }
     } catch (error) {
       console.error(`Failed to stop server ${serverName}:`, error);
       alert(`Error stopping server ${serverName}: ${error}`);
-      loadServerStatus(); // Refresh state on error to ensure consistency
+      loadServerStatus();
     } finally {
       setIsLoading((prev) => ({ ...prev, [serverName]: false }));
     }
   };
 
+  const handleServerClick = (server: McpServerInfo) => {
+    if (server.status !== 'running') return;
+    // If tools for this server haven't been fetched yet, fetch them now.
+    if (!discoveredTools[server.name]) {
+        fetchToolsForServer(server.name);
+    }
+    setSelectedServerName(server.name);
+  }
+
   // --- UI Rendering ---
+
   const renderServerList = () => (
     <div className="mcp-menu-content">
       {servers.map((server) => {
-        const tools = discoveredTools[server.name] || [];
+        const toolCount = discoveredTools[server.name]?.length ?? 0;
         const serverIsLoading = isLoading[server.name];
         return (
           <div key={server.name} className="mcp-menu-item server-item">
-            <div className="server-info" onClick={() => server.status === 'running' && setSelectedServerName(server.name)}>
+            <div className="server-info" onClick={() => handleServerClick(server)}>
                 <span className={`status-indicator ${server.status}`}></span>
                 <span className="server-name">{server.name}</span>
-                {server.status === 'running' && <span className="tool-count-badge">{tools.length}</span>}
+                {server.status === 'running' && <span className="tool-count-badge">{toolCount}</span>}
             </div>
             <button
               className={`server-action-btn ${server.status}`}
@@ -131,27 +171,20 @@ const McpToolsMenu: React.FC = () => {
           <h4>{selectedServerName}</h4>
         </div>
         <hr className="mcp-separator" />
-        {tools.length > 0 ? tools.map((tool) => (
-          <div key={tool.name} className="mcp-menu-item tool-item">
-            <span className="tool-name" title={tool.description}>{tool.name}</span>
-            {/* Placeholder for toggle switch */}
-          </div>
+        {tools.length > 0 ? tools.map((toolName) => (
+          <label key={toolName} className="mcp-menu-item tool-item" title={toolName}>
+            <input 
+              type="checkbox" 
+              className="tool-checkbox"
+              checked={activeTools.includes(toolName)}
+              onChange={() => onToggleTool(toolName)}
+            />
+            <span className="tool-name">{toolName}</span>
+          </label>
         )) : <div className="no-tools-message">No tools found for this server.</div>}
       </div>
     );
   };
-
-  // --- Component Lifecycle ---
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-        setSelectedServerName(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   return (
     <div className="mcp-tools-menu" ref={menuRef}>
