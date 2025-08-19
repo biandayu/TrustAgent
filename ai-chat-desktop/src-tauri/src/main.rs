@@ -489,7 +489,7 @@ fn get_discovered_tools(
 #[tauri::command]
 async fn run_agent_task(
     message: String,
-    active_tools: Vec<String>,
+    _active_tools: Vec<String>, // Prefix with _ to suppress unused variable warning
     state: State<'_, Arc<AppState>>,
     window: Window,
 ) -> Result<String, String> {
