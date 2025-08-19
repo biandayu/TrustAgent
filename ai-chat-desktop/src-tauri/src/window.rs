@@ -1,6 +1,6 @@
 use crate::ChatMessage;
 
-const MAX_MESSAGES: usize = 20; // Adjust this based on your needs
+const MAX_MESSAGES: usize = 40; // Adjust this based on your needs
 
 pub fn select_context_messages(messages: &[ChatMessage], max_messages: Option<usize>) -> Vec<ChatMessage> {
     let window_size = max_messages.unwrap_or(MAX_MESSAGES);

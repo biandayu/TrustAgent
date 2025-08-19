@@ -75,6 +75,7 @@ function App() {
   };
 
   useEffect(() => {
+    let isInitializingTools = false;
     const initializeApp = async () => {
       try {
         const loadedSessions = (await safeInvoke("get_all_sessions")) as ChatSession[];
@@ -95,7 +96,39 @@ function App() {
       }
     };
 
+    const initializeTools = async () => {
+      // Prevent multiple simultaneous initializations
+      if (isInitializingTools) return;
+      isInitializingTools = true;
+      
+      try {
+        console.log("Initializing active tools...");
+        const allTools = (await safeInvoke("get_all_discovered_tools")) as string[];
+        setActiveTools(allTools);
+        console.log("Initialized active tools:", allTools);
+      } catch (toolError) {
+        console.warn("Could not initialize active tools:", toolError);
+      } finally {
+        isInitializingTools = false;
+      }
+    };
+
     initializeApp();
+
+    // Listen for MCP server status changes to initialize tools
+    const unlistenMcpStatus = listen('mcp_server_status_changed', async () => {
+      console.log('Received mcp_server_status_changed event during init, re-initializing tools...');
+      // Wait a bit to ensure the backend state is fully updated
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await initializeTools();
+    });
+    
+    // Also try to initialize tools once on startup, in case servers are already running
+    // Add a slight delay to give the backend a chance to start MCP servers
+    const initialToolInitTimeout = setTimeout(async () => {
+      console.log('Attempting initial tool initialization...');
+      await initializeTools();
+    }, 1000); // 1 second delay
 
     const unlisten = listen<AgentEvent>("agent_event", (event) => {
       console.log("Received agent_event:", event.payload);
@@ -104,6 +137,8 @@ function App() {
 
     return () => {
       unlisten.then((f) => f());
+      unlistenMcpStatus.then((f) => f());
+      clearTimeout(initialToolInitTimeout);
     };
   }, []);
 

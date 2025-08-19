@@ -485,11 +485,25 @@ fn get_discovered_tools(
     Ok(tools.get(&server_name).cloned().unwrap_or_default())
 }
 
+#[tauri::command]
+fn get_all_discovered_tools(state: State<'_, Arc<AppState>>) -> Result<Vec<String>, String> {
+    let tools_map = state.mcp_tools.lock().unwrap();
+    let mut all_tools = Vec::new();
+    // Iterate through all servers and their tools
+    for (_server_name, tools) in tools_map.iter() {
+        all_tools.extend(tools.iter().cloned());
+    }
+    // Remove potential duplicates if a tool name exists in multiple servers (unlikely but possible)
+    all_tools.sort();
+    all_tools.dedup();
+    Ok(all_tools)
+}
+
 // --- Agent Commands ---
 #[tauri::command]
 async fn run_agent_task(
     message: String,
-    _active_tools: Vec<String>, // Prefix with _ to suppress unused variable warning
+    active_tools: Vec<String>, // Remove _ prefix
     state: State<'_, Arc<AppState>>,
     window: Window,
 ) -> Result<String, String> {
@@ -548,7 +562,7 @@ async fn run_agent_task(
                     description: format!("A tool named '{}' from server '{}'", tool_name, server_name),
                 })
             })
-            // .filter(|tool| active_tools.contains(&tool.tool_name)) // DIAGNOSTIC: Temporarily disabled filtering
+            .filter(|tool| active_tools.contains(&tool.tool_name)) // Apply the frontend filter
             .collect()
     }; // Lock guard is dropped here
 
@@ -784,11 +798,11 @@ fn main() {
         .manage(app_state)
         .setup(setup_app)
         .invoke_handler(tauri::generate_handler![
-            // MCP
             get_mcp_servers,
             start_mcp_server,
             stop_mcp_server,
             get_discovered_tools,
+            get_all_discovered_tools, // Add the new command
             // Agent
             run_agent_task,
             // Session

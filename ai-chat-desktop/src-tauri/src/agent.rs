@@ -314,7 +314,7 @@ impl Agent {
                     // --- 结束新增 ---
                     continue; // Continue the main loop with updated messages
                 }
-                Err(parse_error) => {
+                Err(_parse_error) => {
                     // --- 如果解析失败，表示不是工具调用，或者格式错误 ---
                     // Log the error/warning from `parse_strict_tool_call`
                     // If it was a format error, it's already logged.
