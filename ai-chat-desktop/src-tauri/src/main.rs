@@ -261,8 +261,29 @@ async fn _start_mcp_server_logic(
     info!(server_name = %server_name, "Setting MCP server working directory to: {:?}", working_dir);
     cmd.current_dir(&working_dir);
 
+    // Get the PATH from the parent process environment
     let current_path = std::env::var("PATH").map_err(|e| format!("Failed to get PATH environment variable: {}", e))?;
-    cmd.env("PATH", &current_path);
+
+    // --- 改进：确保子进程继承完整的 PATH ---
+    // Get the PATH from the current environment, which should include Homebrew paths etc.
+    // Fall back to a default if somehow it's not set.
+    let inherited_path = std::env::var("PATH").unwrap_or_else(|_| {
+        #[cfg(target_os = "macos")]
+        {
+            // Common default PATH for macOS, especially if launched from GUI
+            "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin".to_string()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string()
+        }
+    });
+    
+    // Combine the inherited PATH with the current PATH (to be safe), preferring the inherited one.
+    // This ensures we have a fuller PATH including Homebrew locations.
+    let full_path_env = format!("{}:{}", inherited_path, current_path);
+    cmd.env("PATH", &full_path_env);
+    // --- 结束改进 ---
 
     // --- Enhanced Debug Logging for ALL servers ---
     info!(server_name = %server_name, "=== MCP SERVER STARTUP DEBUG INFO ===");
