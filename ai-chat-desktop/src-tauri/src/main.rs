@@ -261,27 +261,43 @@ async fn _start_mcp_server_logic(
     info!(server_name = %server_name, "Setting MCP server working directory to: {:?}", working_dir);
     cmd.current_dir(&working_dir);
 
-    // Get the PATH from the parent process environment
+    // --- 改进：确保子进程继承更完整的 PATH ---
+    // Start with the PATH from the parent process environment, which should be the most complete.
     let current_path = std::env::var("PATH").map_err(|e| format!("Failed to get PATH environment variable: {}", e))?;
-
-    // --- 改进：确保子进程继承完整的 PATH ---
-    // Get the PATH from the current environment, which should include Homebrew paths etc.
-    // Fall back to a default if somehow it's not set.
-    let inherited_path = std::env::var("PATH").unwrap_or_else(|_| {
+    
+    // For macOS GUI apps, the PATH might be minimal and not include Homebrew paths.
+    // For other systems (Windows, Linux), the inherited PATH is usually sufficient.
+    // We will try to augment it only for known problematic cases.
+    let full_path_env = {
         #[cfg(target_os = "macos")]
         {
-            // Common default PATH for macOS, especially if launched from GUI
-            "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin".to_string()
+            // Check if the current PATH already contains common Homebrew paths
+            let has_homebrew_bin = current_path.contains("/opt/homebrew/bin") || current_path.contains("/usr/local/bin");
+            
+            if !has_homebrew_bin {
+                // If not, prepend common Homebrew paths to increase the chance of finding node etc.
+                // Prefer Apple Silicon path first, then Intel path.
+                let augmented_path = format!("/opt/homebrew/bin:/usr/local/bin:{}", current_path);
+                info!(server_name = %server_name, "Augmented PATH for macOS with Homebrew paths. New PATH length: {}", augmented_path.len());
+                augmented_path
+            } else {
+                // If it already has Homebrew paths, use the current PATH as is.
+                info!(server_name = %server_name, "Current PATH on macOS already contains Homebrew paths.");
+                current_path
+            }
         }
         #[cfg(not(target_os = "macos"))]
         {
-            "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string()
+            // On Windows and Linux, rely primarily on the inherited PATH.
+            // Adding default paths can sometimes interfere or be redundant.
+            // If there are specific issues, they should be addressed by ensuring
+            // the user's environment is set up correctly or by adding very specific paths.
+            info!(server_name = %server_name, "Using inherited PATH for non-macOS system.");
+            current_path
         }
-    });
+    };
     
-    // Combine the inherited PATH with the current PATH (to be safe), preferring the inherited one.
-    // This ensures we have a fuller PATH including Homebrew locations.
-    let full_path_env = format!("{}:{}", inherited_path, current_path);
+    // Set the combined/augmented PATH for the child process
     cmd.env("PATH", &full_path_env);
     // --- 结束改进 ---
 
@@ -291,7 +307,8 @@ async fn _start_mcp_server_logic(
     info!(server_name = %server_name, "Args: {:?}", server_config.args);
     info!(server_name = %server_name, "Current working directory: {:?}", std::env::current_dir());
     info!(server_name = %server_name, "Server working directory (set for child): {:?}", working_dir);
-    info!(server_name = %server_name, "PATH environment: {}", current_path);
+    // full_path_env is already a String, no need to convert
+    info!(server_name = %server_name, "PATH environment: {}", full_path_env); 
     info!(server_name = %server_name, "Log file path: {:?}", log_path);
     
     // 构建完整的命令字符串用于调试
@@ -304,7 +321,13 @@ async fn _start_mcp_server_logic(
         info!(server_name = %server_name, "Command path exists: {}, is_file: {}, is_executable (Windows): {}", command_path.exists(), command_path.is_file(), command_path.exists()); // Windows check
     } else {
         // 如果是相对路径，尝试在 PATH 中查找
-        let path_dirs: Vec<&str> = current_path.split(';').collect();
+        // full_path_env is already a String, no need to convert
+        // Split PATH using the OS-specific separator
+        #[cfg(windows)]
+        let path_dirs: Vec<&str> = full_path_env.split(';').collect();
+        #[cfg(not(windows))]
+        let path_dirs: Vec<&str> = full_path_env.split(':').collect();
+        
         info!(server_name = %server_name, "Searching for command in PATH directories: {:?}", path_dirs);
         
         let mut found = false;
@@ -329,7 +352,7 @@ async fn _start_mcp_server_logic(
     test_cmd.args(&server_config.args);
     test_cmd.arg("--help"); // 添加一个无害的参数来测试命令是否能启动
     test_cmd.current_dir(&working_dir); // Use the same working dir for test
-    test_cmd.env("PATH", &current_path); // Use the same PATH for test
+    test_cmd.env("PATH", &full_path_env); // Use the combined PATH for test
     match test_cmd.output() {
         Ok(output) => {
             let stdout_str = String::from_utf8_lossy(&output.stdout);
@@ -358,7 +381,8 @@ async fn _start_mcp_server_logic(
         error!(server_name = %server_name, "Failed to wrap child process after {:?}. Error details: {}", duration, e);
         error!(server_name = %server_name, "Command: {}", server_config.command);
         error!(server_name = %server_name, "Args: {:?}", server_config.args);
-        error!(server_name = %server_name, "Current PATH: {}", current_path);
+        // full_path_env is already a String, no need to convert
+        error!(server_name = %server_name, "Current PATH: {}", full_path_env);
         
         // Try to read the last part of the stderr log file
         let log_tail = read_last_lines_of_file(&log_path, 20).unwrap_or_else(|_| "Failed to read log file".to_string());
