@@ -6,8 +6,8 @@
     "distDir": "../dist"
   },
   "package": {
-    "productName": "ai-chat-desktop",
-    "version": "0.0.0"
+    "productName": "TrustAgent Desktop",
+    "version": "0.0.1"
   },
   "tauri": {
     "allowlist": {

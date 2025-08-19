@@ -239,9 +239,20 @@ async fn _start_mcp_server_logic(
 
     let mut cmd = Command::new(&server_config.command);
     cmd.args(&server_config.args);
-    cmd.stdin(Stdio::piped())
-       .stdout(Stdio::piped())  // Keep stdout for MCP protocol communication
-       .stderr(stderr_log_file); // Only redirect stderr to log file
+    
+    // --- 修改：更彻底地重定向 stdio 并隐藏窗口 ---
+    // Always redirect stdio to prevent any output from appearing in a console window.
+    // Redirect stdin to null as the MCP protocol handles communication.
+    cmd.stdin(Stdio::null()) // Typically, MCP uses the stdio pipes for communication, but for hiding window, null might be safer.
+       .stdout(Stdio::null()) // We don't need the stdout text in the parent console. MCP protocol uses the pipe.
+       .stderr(stderr_log_file); // Keep stderr logs for debugging.
+
+    // On Windows, prevent the child process console window from appearing.
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    // --- 结束修改 ---
 
     // Set the working directory for the child process to be the app's base directory.
     // This is crucial for node-based servers that might resolve packages or files
