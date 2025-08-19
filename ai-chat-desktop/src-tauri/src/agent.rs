@@ -143,9 +143,9 @@ impl Agent {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            // Combine tool list with strict format instruction
+            // Combine tool list with strict format instruction and a stronger emphasis
             format!(
-                "You are a powerful AI assistant capable of using tools to answer questions. You have access to the following tools:\n\n{}\n\n{}",
+                "You are a powerful AI assistant with a fixed set of capabilities provided by the following tools. You ALWAYS have access to these tools, regardless of the current conversation topic:\n\n{}\n\n{}",
                 tool_list_str, TOOL_CALL_FORMAT_INSTRUCTION
             )
         };
@@ -179,7 +179,8 @@ impl Agent {
         }
 
         const MAX_ITERATIONS: u32 = 20;
-        const CONTEXT_WINDOW_SIZE: usize = 40;
+        // Increased context window size slightly to accommodate reminder messages
+        const CONTEXT_WINDOW_SIZE: usize = 45;
 
         for i in 0..MAX_ITERATIONS {
             info!(iteration = i + 1, "Agent loop iteration");
@@ -294,6 +295,23 @@ impl Agent {
                             .unwrap()
                             .into(),
                     );
+                    // --- 新增：添加工具调用后的上下文提醒 ---
+                    // 在工具结果之后添加一条系统消息，提醒 LLM 其拥有的工具集。
+                    // 这有助于在长对话中保持 LLM 对自身能力的认知。
+                    if !available_tools.is_empty() {
+                        let reminder_content = format!(
+                            "[System Reminder] You have access to the following tools: {}. You can use them at any time by responding with a valid JSON object as instructed.",
+                            available_tools.iter().map(|t| t.tool_name.as_str()).collect::<Vec<_>>().join(", ")
+                        );
+                        messages.push(
+                            ChatCompletionRequestSystemMessageArgs::default()
+                                .content(reminder_content)
+                                .build()
+                                .unwrap()
+                                .into(),
+                        );
+                    }
+                    // --- 结束新增 ---
                     continue; // Continue the main loop with updated messages
                 }
                 Err(parse_error) => {
