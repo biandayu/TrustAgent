@@ -1,6 +1,6 @@
 {
     "openai": {
-        "api_key": "YOUR_OPENAI_API_KEY",
+        "api_key": "<YOUR_OPENAI_API_KEY>",
         "base_url": "https://api.openai.com/v1",
         "model": "gpt-4-turbo"
     },
@@ -19,6 +19,14 @@
             "command": "npx.cmd",
             "args": [
                 "@playwright/mcp@latest"
+            ]
+        },
+        "tavily-mcp": {
+            "command": "npx.cmd",
+            "args": [
+                "-y",
+                "mcp-remote",
+                "https://mcp.tavily.com/mcp/?tavilyApiKey=<YOUR_TAVILY_API_KEY>"
             ]
         }
     }
