@@ -1,4 +1,4 @@
-#[cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agent;
 mod window;
@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tauri::{App, Manager, State, Window};
+use tauri::{App, Manager, State, WebviewWindow, Emitter};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -200,8 +200,11 @@ fn generate_session_title(messages: &[ChatMessage]) -> String {
         .find(|m| m.role == "user")
         .map(|m| {
             let mut t = m.content.trim().to_string();
+            // Ensure we truncate at a character boundary to avoid panic
             if t.len() > 20 {
-                t.truncate(20);
+                // Find a character boundary at or before the 20th byte
+                let max_index = t.char_indices().take(20).last().map_or(0, |(i, _)| i);
+                t.truncate(max_index);
                 t.push_str("...");
             }
             t
@@ -214,7 +217,7 @@ fn generate_session_title(messages: &[ChatMessage]) -> String {
 async fn _start_mcp_server_logic(
     server_name: String,
     state: Arc<AppState>,
-    window: Window,
+    window: WebviewWindow,
 ) -> Result<(), String> {
     info!(server_name = %server_name, "Attempting to start MCP server");
     let config = state.config.lock().unwrap().clone();
@@ -491,13 +494,13 @@ async fn _start_mcp_server_logic(
 
 #[tauri::command]
 fn get_mcp_servers(state: State<'_, Arc<AppState>>) -> Result<Vec<McpServerInfo>, String> {
-    let config = state.config.lock().unwrap();
+    let config = state.config.lock().map_err(|e| format!("Failed to lock config: {}", e))?;
     let servers_info = config
         .mcp_servers
         .keys()
         .map(|name| McpServerInfo {
             name: name.clone(),
-            status: if state.mcp_tools.lock().unwrap().contains_key(name) {
+            status: if state.mcp_tools.lock().map_err(|e| format!("Failed to lock mcp_tools: {}", e)).unwrap().contains_key(name) {
                 "running".to_string()
             } else {
                 "stopped".to_string()
@@ -511,7 +514,7 @@ fn get_mcp_servers(state: State<'_, Arc<AppState>>) -> Result<Vec<McpServerInfo>
 async fn start_mcp_server(
     server_name: String,
     state: State<'_, Arc<AppState>>,
-    window: Window,
+    window: WebviewWindow,
 ) -> Result<(), String> {
     _start_mcp_server_logic(server_name, state.inner().clone(), window).await
 }
@@ -520,10 +523,10 @@ async fn start_mcp_server(
 async fn stop_mcp_server(
     server_name: String,
     state: State<'_, Arc<AppState>>,
-    window: Window,
+    window: WebviewWindow,
 ) -> Result<(), String> {
     info!(server_name = %server_name, "Stopping MCP server");
-    state.mcp_tools.lock().unwrap().remove(&server_name);
+    state.mcp_tools.lock().map_err(|e| format!("Failed to lock mcp_tools: {}", e))?.remove(&server_name);
     // Here you would also kill the process if you were managing it.
     // For now, we just remove it from the list of active tool providers.
     warn!(server_name = %server_name, "Process handle not stored, cannot kill process. Only removing from active list.");
@@ -537,13 +540,13 @@ fn get_discovered_tools(
     server_name: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<String>, String> {
-    let tools = state.mcp_tools.lock().unwrap();
+    let tools = state.mcp_tools.lock().map_err(|e| format!("Failed to lock mcp_tools: {}", e))?;
     Ok(tools.get(&server_name).cloned().unwrap_or_default())
 }
 
 #[tauri::command]
 fn get_all_discovered_tools(state: State<'_, Arc<AppState>>) -> Result<Vec<String>, String> {
-    let tools_map = state.mcp_tools.lock().unwrap();
+    let tools_map = state.mcp_tools.lock().map_err(|e| format!("Failed to lock mcp_tools: {}", e))?;
     let mut all_tools = Vec::new();
     // Iterate through all servers and their tools
     for (_server_name, tools) in tools_map.iter() {
@@ -561,7 +564,7 @@ async fn run_agent_task(
     message: String,
     active_tools: Vec<String>, // Remove _ prefix
     state: State<'_, Arc<AppState>>,
-    window: Window,
+    window: WebviewWindow,
 ) -> Result<String, String> {
     info!(%message, "Running agent task with history");
 
@@ -570,7 +573,7 @@ async fn run_agent_task(
         .ok_or_else(|| "No active session".to_string())?;
 
     let history_clone = {
-        let mut sessions = state.sessions.lock().unwrap();
+        let mut sessions = state.sessions.lock().map_err(|e| format!("Failed to lock sessions: {}", e))?;
         let session = sessions.get_mut(&session_id)
             .ok_or_else(|| "Current session not found in state".to_string())?;
 
@@ -608,7 +611,7 @@ async fn run_agent_task(
 
     // 2. Collect available tools from the state, filtered by the active_tools list from the frontend
     let available_tools: Vec<agent::Tool> = {
-        let mcp_tools_guard = state.mcp_tools.lock().unwrap();
+        let mcp_tools_guard = state.mcp_tools.lock().map_err(|e| format!("Failed to lock mcp_tools: {}", e))?;
         mcp_tools_guard
             .iter()
             .flat_map(|(server_name, tools)| {
@@ -632,7 +635,7 @@ async fn run_agent_task(
         .await;
 
     // 4. Save the result to the session
-    let mut sessions = state.sessions.lock().unwrap();
+    let mut sessions = state.sessions.lock().map_err(|e| format!("Failed to lock sessions: {}", e))?;
     let session = sessions.get_mut(&session_id)
         .ok_or_else(|| "Current session not found after agent run".to_string())?;
 
@@ -657,7 +660,7 @@ async fn run_agent_task(
     }
     
     session.updated_at = now_ts();
-    save_session_to_file(session)?;
+    save_session_to_file(session).map_err(|e| format!("Failed to save session: {}", e))?;
 
     result
 }
@@ -670,20 +673,20 @@ fn rename_session(
     new_title: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().unwrap();
+    let mut sessions = state.sessions.lock().map_err(|e| format!("Failed to lock sessions: {}", e))?;
     if let Some(session) = sessions.get_mut(&id) {
         session.title = new_title;
         session.updated_at = now_ts();
-        save_session_to_file(session)?;
+        save_session_to_file(session).map_err(|e| format!("Failed to save session: {}", e))?;
     }
     Ok(())
 }
 
 #[tauri::command]
 fn delete_session(id: String, state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().unwrap();
+    let mut sessions = state.sessions.lock().map_err(|e| format!("Failed to lock sessions: {}", e))?;
     if sessions.remove(&id).is_some() {
-        delete_session_file(&id)?;
+        delete_session_file(&id).map_err(|e| format!("Failed to delete session file: {}", e))?;
     }
     Ok(())
 }
@@ -696,7 +699,7 @@ fn open_config_file() -> Result<(), String> {
 
 #[tauri::command]
 async fn get_all_sessions(state: State<'_, Arc<AppState>>) -> Result<Vec<ChatSession>, String> {
-    let sessions = state.sessions.lock().unwrap();
+    let sessions = state.sessions.lock().map_err(|e| format!("Failed to lock sessions: {}", e))?;
     let mut list: Vec<_> = sessions.values().cloned().collect();
     list.sort_by_key(|s| std::cmp::Reverse(s.updated_at));
     Ok(list)
@@ -704,8 +707,8 @@ async fn get_all_sessions(state: State<'_, Arc<AppState>>) -> Result<Vec<ChatSes
 
 #[tauri::command]
 async fn finalize_and_new_chat(state: State<'_, Arc<AppState>>) -> Result<ChatSession, String> {
-    let mut sessions = state.sessions.lock().unwrap();
-    let mut current_id_guard = state.current_session_id.lock().unwrap();
+    let mut sessions = state.sessions.lock().map_err(|e| format!("Failed to lock sessions: {}", e))?;
+    let mut current_id_guard = state.current_session_id.lock().map_err(|e| format!("Failed to lock current_session_id: {}", e))?;
 
     if let Some(old_id) = current_id_guard.clone() {
         let is_empty = sessions
@@ -714,12 +717,12 @@ async fn finalize_and_new_chat(state: State<'_, Arc<AppState>>) -> Result<ChatSe
 
         if is_empty {
             sessions.remove(&old_id);
-            delete_session_file(&old_id)?;
+            delete_session_file(&old_id).map_err(|e| format!("Failed to delete session file: {}", e))?;
         } else {
             if let Some(session) = sessions.get_mut(&old_id) {
                 session.title = generate_session_title(&session.messages);
                 session.updated_at = now_ts();
-                save_session_to_file(session)?;
+                save_session_to_file(session).map_err(|e| format!("Failed to save session: {}", e))?;
             }
         }
     }
@@ -740,8 +743,8 @@ async fn select_session(
     id_to_select: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<ChatSession, String> {
-    let mut sessions = state.sessions.lock().unwrap();
-    let mut current_id_guard = state.current_session_id.lock().unwrap();
+    let mut sessions = state.sessions.lock().map_err(|e| format!("Failed to lock sessions: {}", e))?;
+    let mut current_id_guard = state.current_session_id.lock().map_err(|e| format!("Failed to lock current_session_id: {}", e))?;
 
     if let Some(old_id) = current_id_guard.clone() {
         if old_id != id_to_select {
@@ -755,7 +758,7 @@ async fn select_session(
                 if let Some(old_session) = sessions.get_mut(&old_id) {
                     old_session.title = generate_session_title(&old_session.messages);
                     old_session.updated_at = now_ts();
-                    save_session_to_file(old_session)?;
+                    save_session_to_file(old_session).map_err(|e| format!("Failed to save session: {}", e))?;
                 }
             }
         }
@@ -812,9 +815,9 @@ fn setup_logging() {
 
 fn setup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let app_state = app.state::<Arc<AppState>>();
-    let config = app_state.config.lock().unwrap().clone();
+    let config = app_state.config.lock().map_err(|e| format!("Failed to lock config: {}", e))?;
     let server_names: Vec<String> = config.mcp_servers.keys().cloned().collect();
-    let window = app.get_window("main").unwrap();
+    let window = app.get_webview_window("main").unwrap();
 
     info!(
         "App setup: Found {} MCP servers in config.",
@@ -827,8 +830,8 @@ fn setup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         tauri::async_runtime::spawn(async move {
             if let Err(e) = _start_mcp_server_logic(name.clone(), state_clone, window_clone.clone()).await {
                 error!(server_name = %name, "Failed to auto-start MCP server: {}", e);
-                let msg = format!("The MCP server '{}' failed to start.\n\nError: {}", name, e);
-                tauri::api::dialog::message(Some(&window_clone), "MCP Server Error", msg);
+                // Emit error event instead of showing dialog
+                window_clone.emit("mcp-server-error", format!("The MCP server '{}' failed to start. Error: {}", name, e)).ok();
             }
         });
     }

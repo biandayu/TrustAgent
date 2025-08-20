@@ -1,6 +1,6 @@
 //! The core Agent logic module.
 
-use crate::{AppState, ChatMessage};
+use crate::{AppState, ChatMessage, WebviewWindow};
 use async_openai::{
     config::OpenAIConfig,
     types::{
@@ -14,7 +14,7 @@ use rmcp::model::{CallToolRequestParam, JsonObject};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::sync::Arc;
-use tauri::Window;
+use tauri::Emitter;
 use tracing::{info, instrument, warn};
 
 // --- Agent Event Structures ---
@@ -118,12 +118,12 @@ impl Agent {
         ],
         available_tools: Vec<Tool>,
         state: Arc<AppState>,
-        window: &Window,
+        window: &WebviewWindow,
     ) -> Result<String, String> {
         info!(num_messages = history.len(), num_tools = available_tools.len(), "Running agent task");
 
-        let config = state.config.lock().unwrap().clone();
-        let mcp_clients_clone = state.mcp_clients.lock().unwrap().clone();
+        let config = state.config.lock().map_err(|e| format!("Failed to lock config: {}", e))?.clone();
+        let mcp_clients_clone = state.mcp_clients.lock().map_err(|e| format!("Failed to lock mcp_clients: {}", e))?.clone();
         
         if config.openai.api_key.is_empty() {
             return Err("OpenAI API key is not set in the configuration file.".to_string());

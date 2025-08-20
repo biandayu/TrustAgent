@@ -2,28 +2,22 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devPath": "http://localhost:8080",
-    "distDir": "../dist"
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:8080"
   },
-  "package": {
-    "productName": "TrustAgent Desktop",
-    "version": "0.0.1"
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.ico"
+    ]
   },
-  "tauri": {
-    "allowlist": {
-      "all": false
-    },
-    "bundle": {
-      "active": true,
-      "targets": "all",
-      "identifier": "com.trustagent.aichat",
-      "icon": [
-        "icons/icon.ico"
-      ]
-    },
-    "security": {
-      "csp": null
-    },
+  "productName": "TrustAgent Desktop",
+  "mainBinaryName": "TrustAgent Desktop",
+  "version": "0.0.1",
+  "identifier": "com.trustagent.aichat",
+  "plugins": {},
+  "app": {
     "windows": [
       {
         "fullscreen": false,
@@ -35,8 +29,12 @@
         "minHeight": 600,
         "center": true,
         "decorations": true,
-        "transparent": false
+        "transparent": false,
+        "useHttpsScheme": true
       }
-    ]
+    ],
+    "security": {
+      "csp": null
+    }
   }
 }

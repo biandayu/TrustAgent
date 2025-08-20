@@ -1,9 +1,11 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@charset "UTF-8";
 
 /* Import Prism.js syntax highlighting styles */
 @import 'prismjs/themes/prism-tomorrow.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 /* Custom markdown rendering styles */
 .markdown-renderer {

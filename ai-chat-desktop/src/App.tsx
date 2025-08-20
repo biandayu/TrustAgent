@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import SmartContentRenderer from "./components/SmartContentRenderer";
 import Sidebar from "./components/Sidebar";
@@ -54,11 +54,11 @@ function App() {
   }, [messages]);
 
   const safeInvoke = async (cmd: string, args?: any) => {
-    if (typeof window.__TAURI_IPC__ !== "undefined") {
+    try {
       return await invoke(cmd, args);
-    } else {
-      console.warn(`Tauri IPC not available. Command "${cmd}" not executed.`);
-      throw new Error(`Tauri IPC not available for command: ${cmd}`);
+    } catch (error) {
+      console.warn(`Tauri IPC command "${cmd}" failed:`, error);
+      throw error;
     }
   };
 

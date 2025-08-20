@@ -5,6 +5,7 @@ import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { tomorrow } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import 'prismjs/themes/prism-tomorrow.css'; // Directly import the CSS
 
 // IMPORTANT: For syntax highlighting to work, ensure you have imported a Prism.js theme's CSS.
 // For example, in your main CSS file (e.g., App.css or index.css), you might add:
