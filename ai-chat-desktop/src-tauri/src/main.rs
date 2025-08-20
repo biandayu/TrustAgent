@@ -240,6 +240,9 @@ async fn _start_mcp_server_logic(
     let mut stderr_log_file = File::create(&log_path).map_err(|e| format!("Failed to create MCP log file: {} (Path: {:?})", e, log_path))?;
     stderr_log_file.flush().map_err(|e| format!("Failed to flush log file: {} (Path: {:?})", e, log_path))?;
 
+    // Clone the log file for the second use
+    let stderr_log_file_clone = stderr_log_file.try_clone().map_err(|e| format!("Failed to clone log file: {}", e))?;
+
     let mut cmd = Command::new(&server_config.command);
     cmd.args(&server_config.args);
     
@@ -269,8 +272,8 @@ async fn _start_mcp_server_logic(
     let current_path = std::env::var("PATH").map_err(|e| format!("Failed to get PATH environment variable: {}", e))?;
     
     // For macOS GUI apps, the PATH might be minimal and not include Homebrew paths.
-    // For other systems (Windows, Linux), the inherited PATH is usually sufficient.
-    // We will try to augment it only for known problematic cases.
+    // For Linux, GUI apps might also have incomplete PATH.
+    // For Windows, the inherited PATH is usually sufficient.
     let full_path_env = {
         #[cfg(target_os = "macos")]
         {
@@ -279,29 +282,42 @@ async fn _start_mcp_server_logic(
             
             if !has_homebrew_bin {
                 // If not, prepend common Homebrew paths to increase the chance of finding node etc.
-                // Prefer Apple Silicon path first, then Intel path.
                 let augmented_path = format!("/opt/homebrew/bin:/usr/local/bin:{}", current_path);
-                info!(server_name = %server_name, "Augmented PATH for macOS with Homebrew paths. New PATH length: {}", augmented_path.len());
+                info!(server_name = %server_name, "Augmented PATH for macOS with Homebrew paths.");
                 augmented_path
             } else {
-                // If it already has Homebrew paths, use the current PATH as is.
                 info!(server_name = %server_name, "Current PATH on macOS already contains Homebrew paths.");
                 current_path
             }
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
         {
-            // On Windows and Linux, rely primarily on the inherited PATH.
-            // Adding default paths can sometimes interfere or be redundant.
-            // If there are specific issues, they should be addressed by ensuring
-            // the user's environment is set up correctly or by adding very specific paths.
-            info!(server_name = %server_name, "Using inherited PATH for non-macOS system.");
+            // On Linux, GUI apps might not have the complete PATH.
+            // Add common paths where npm/npx might be installed
+            let home_dir = std::env::var("HOME").unwrap_or_else(|_| String::from("/home/user"));
+            let common_paths = vec![
+                "/usr/local/bin",
+                "/usr/bin",
+                "/bin",
+                // User-specific npm global bin directory
+                format!("{}/.npm/bin", home_dir),
+                // NVM paths (try to get the latest node version)
+                format!("{}/.nvm/versions/node", home_dir),
+            ];
+            
+            // Create a new PATH with common paths prepended
+            let augmented_path = format!("{}:{}", common_paths.join(":"), current_path);
+            info!(server_name = %server_name, "Augmented PATH for Linux with common paths.");
+            augmented_path
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            // On Windows, rely primarily on the inherited PATH
+            info!(server_name = %server_name, "Using inherited PATH for Windows system.");
             current_path
         }
     };
     
-    // Set the combined/augmented PATH for the child process
-    cmd.env("PATH", &full_path_env);
     // --- 结束改进 ---
 
     // --- Enhanced Debug Logging for ALL servers ---
@@ -314,12 +330,76 @@ async fn _start_mcp_server_logic(
     info!(server_name = %server_name, "PATH environment: {}", full_path_env); 
     info!(server_name = %server_name, "Log file path: {:?}", log_path);
     
+    // Special handling for 'npx' command on Linux to find the full path
+    #[cfg(target_os = "linux")]
+    let (actual_command, actual_args) = {
+        if server_config.command == "npx" {
+            // Try to find npx in common locations
+            let common_npx_paths = vec![
+                "/usr/local/bin/npx",
+                "/usr/bin/npx",
+                "/bin/npx",
+                &format!("{}/.npm/bin/npx", std::env::var("HOME").unwrap_or_else(|_| String::from("/home/user"))),
+                &format!("{}/.nvm/versions/node/$(node -v)/bin/npx", std::env::var("HOME").unwrap_or_else(|_| String::from("/home/user"))),
+            ];
+            
+            let mut found_npx = None;
+            for path in &common_npx_paths {
+                if std::path::Path::new(path).exists() {
+                    found_npx = Some(path.to_string());
+                    break;
+                }
+            }
+            
+            if let Some(npx_path) = found_npx {
+                info!(server_name = %server_name, "Found npx at: {}", npx_path);
+                (npx_path, server_config.args.clone())
+            } else {
+                // Fallback to using 'which npx' to find the path
+                match std::process::Command::new("which").arg("npx").output() {
+                    Ok(output) if output.status.success() => {
+                        let npx_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        info!(server_name = %server_name, "Found npx via 'which': {}", npx_path);
+                        (npx_path, server_config.args.clone())
+                    },
+                    _ => {
+                        warn!(server_name = %server_name, "Could not find npx in common locations, using original command");
+                        (server_config.command.clone(), server_config.args.clone())
+                    }
+                }
+            }
+        } else {
+            (server_config.command.clone(), server_config.args.clone())
+        }
+    };
+    
+    #[cfg(not(target_os = "linux"))]
+    let (actual_command, actual_args) = (server_config.command.clone(), server_config.args.clone());
+    
     // 构建完整的命令字符串用于调试
-    let full_command = format!("{} {}", server_config.command, server_config.args.join(" "));
+    let full_command = format!("{} {}", actual_command, actual_args.join(" "));
     info!(server_name = %server_name, "Full command string: {}", full_command);
     
+    // Update the command with the actual command and args
+    let mut cmd = Command::new(&actual_command);
+    cmd.args(&actual_args);
+    
+    // --- 修改：更彻底地重定向 stdio 并隐藏窗口 ---
+    // Always redirect stdio to prevent any output from appearing in a console window.
+    // Redirect stdin to null as the MCP protocol handles communication.
+    cmd.stdin(Stdio::null()) // Typically, MCP uses the stdio pipes for communication, but for hiding window, null might be safer.
+       .stdout(Stdio::null()) // We don't need the stdout text in the parent console. MCP protocol uses the pipe.
+       .stderr(stderr_log_file_clone); // Keep stderr logs for debugging.
+
+    // On Windows, prevent the child process console window from appearing.
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    // --- 结束修改 ---
+    
     // 检查命令文件是否存在
-    let command_path = std::path::Path::new(&server_config.command);
+    let command_path = std::path::Path::new(&actual_command);
     if command_path.is_absolute() {
         info!(server_name = %server_name, "Command path exists: {}, is_file: {}, is_executable (Windows): {}", command_path.exists(), command_path.is_file(), command_path.exists()); // Windows check
     } else {

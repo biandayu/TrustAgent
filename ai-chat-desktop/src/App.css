@@ -81,6 +81,57 @@
   @apply bg-gray-800;
 }
 
+/* JSON renderer styles */
+.json-renderer {
+  @apply my-4;
+}
+
+.json-renderer pre {
+  @apply bg-gray-800 rounded-lg p-4 my-4 overflow-x-auto;
+}
+
+.json-renderer code {
+  @apply bg-transparent p-0 rounded-none text-sm;
+}
+
+/* XML renderer styles */
+.xml-renderer {
+  @apply my-4;
+}
+
+.xml-renderer pre {
+  @apply bg-gray-800 rounded-lg p-4 my-4 overflow-x-auto;
+}
+
+.xml-renderer code {
+  @apply bg-transparent p-0 rounded-none text-sm;
+}
+
+/* HTML renderer styles */
+.html-renderer {
+  @apply my-4;
+}
+
+.html-renderer .html-preview {
+  @apply bg-gray-800 rounded-lg p-4 my-4;
+}
+
+.html-renderer .html-source {
+  @apply bg-gray-800 rounded-lg p-4 my-4;
+}
+
+.html-renderer .html-source summary {
+  @apply text-white font-bold cursor-pointer;
+}
+
+.html-renderer pre {
+  @apply bg-gray-800 rounded-lg p-4 my-4 overflow-x-auto;
+}
+
+.html-renderer code {
+  @apply bg-transparent p-0 rounded-none text-sm;
+}
+
 .tool-count-badge {
   display: inline-flex;
   justify-content: center;
