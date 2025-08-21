@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 interface SessionItem {
   id: string;
@@ -31,6 +32,30 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [menuOpenSessionId, setMenuOpenSessionId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filteredSessions, setFilteredSessions] = useState<SessionItem[]>(sessions);
+
+  useEffect(() => {
+    const handleSearch = async () => {
+      if (searchQuery.trim() === "") {
+        setFilteredSessions(sessions);
+      } else {
+        try {
+          const results = await invoke<SessionItem[]>("search_chat_sessions", { query: searchQuery });
+          setFilteredSessions(results);
+        } catch (error) {
+          console.error("Failed to search sessions:", error);
+          setFilteredSessions([]); // Clear on error
+        }
+      }
+    };
+
+    const debounceTimeout = setTimeout(() => {
+        handleSearch();
+    }, 300); // Debounce search to avoid excessive calls
+
+    return () => clearTimeout(debounceTimeout);
+  }, [searchQuery, sessions]);
   return (
   <div className={`relative bg-gray-900 text-white flex flex-col border-r border-gray-700 transition-all duration-200 ease-in-out ${collapsed ? "w-12 min-w-[48px] max-w-[48px]" : "w-[220px] min-w-[180px] max-w-[320px]"}`}> 
       <div className="flex items-center p-3 border-b border-gray-700 bg-gray-900">
@@ -42,9 +67,20 @@ const Sidebar: React.FC<SidebarProps> = ({
       {!collapsed && (
         <div className="flex-1 flex flex-col px-3 overflow-y-auto">
           <button className="mx-0 mt-4 mb-2 py-2 w-full bg-gradient-to-r from-blue-600 to-purple-700 text-white rounded-md font-bold text-sm cursor-pointer transition-all duration-200 ease-in-out hover:from-blue-700 hover:to-purple-800" onClick={onNewChat}>+ New Chat</button>
+          
+          {/* Search Bar */}
+          <div className="px-0 pt-3 mt-1 mb-2">
+            <input
+              type="text"
+              placeholder="Search history..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
           <div className="font-bold text-sm text-gray-400 px-0 pt-3 mt-3 border-b border-gray-700 pb-2 mb-2 uppercase">Chat History</div>
           <div className="flex-1 overflow-y-auto px-0 pb-2">
-            {sessions.map((s) => (
+            {filteredSessions.map((s) => (
               <div
                 key={s.id}
                 className={`group relative flex justify-between items-center py-2 px-3 rounded-md mb-1 cursor-pointer text-sm text-gray-300 transition-colors duration-200 ease-in-out hover:bg-gray-800 hover:text-white ${s.id === currentSessionId ? "bg-blue-700 text-white font-bold" : ""}`} // Missing backtick was here

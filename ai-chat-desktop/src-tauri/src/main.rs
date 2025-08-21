@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agent;
+mod search;
 mod window;
 
 use serde::{Deserialize, Serialize};
@@ -96,7 +97,8 @@ struct AppState {
     current_session_id: Mutex<Option<String>>,
     tool_states: Mutex<HashMap<String, bool>>, // Key: "{server_name}/{tool_name}"
     mcp_tools: Mutex<HashMap<String, Vec<String>>>, // 工具名列表
-    mcp_clients: Mutex<HashMap<String, Arc<rmcp::service::RunningService<rmcp::service::RoleClient, ()>>>>, // Active MCP clients
+        mcp_clients: Mutex<HashMap<String, Arc<rmcp::service::RunningService<rmcp::service::RoleClient, ()>>>>, // Active MCP clients
+    searcher: Mutex<search::Searcher>,
 }
 
 // --- Filesystem and Config Logic ---
@@ -138,6 +140,20 @@ fn save_session_to_file(session: &ChatSession) -> Result<(), String> {
     let path = dir.join(format!("{}.json", session.id));
     let content = serde_json::to_string_pretty(session).map_err(|e| e.to_string())?;
     fs::write(path, content).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Updates the search index for a session
+fn update_session_index(state: &AppState, session: &ChatSession) -> Result<(), String> {
+    let searcher = state.searcher.lock().map_err(|e| format!("Failed to lock searcher: {}", e))?;
+    searcher.add_or_update_session(session)?;
+    Ok(())
+}
+
+/// Removes a session from the search index
+fn remove_session_from_index(state: &AppState, session_id: &str) -> Result<(), String> {
+    let searcher = state.searcher.lock().map_err(|e| format!("Failed to lock searcher: {}", e))?;
+    searcher.remove_session(session_id)?;
     Ok(())
 }
 
@@ -677,6 +693,9 @@ async fn run_agent_task(
     
     session.updated_at = now_ts();
     save_session_to_file(session).map_err(|e| format!("Failed to save session: {}", e))?;
+    
+    // Update the search index with the modified session
+    update_session_index(&state, session)?;
 
     result
 }
@@ -694,6 +713,9 @@ fn rename_session(
         session.title = new_title;
         session.updated_at = now_ts();
         save_session_to_file(session).map_err(|e| format!("Failed to save session: {}", e))?;
+        
+        // Update the search index
+        update_session_index(&state, session)?;
     }
     Ok(())
 }
@@ -703,6 +725,9 @@ fn delete_session(id: String, state: State<'_, Arc<AppState>>) -> Result<(), Str
     let mut sessions = state.sessions.lock().map_err(|e| format!("Failed to lock sessions: {}", e))?;
     if sessions.remove(&id).is_some() {
         delete_session_file(&id).map_err(|e| format!("Failed to delete session file: {}", e))?;
+        
+        // Remove from search index
+        remove_session_from_index(&state, &id)?;
     }
     Ok(())
 }
@@ -722,6 +747,23 @@ async fn get_all_sessions(state: State<'_, Arc<AppState>>) -> Result<Vec<ChatSes
 }
 
 #[tauri::command]
+async fn search_chat_sessions(query: String, state: State<'_, Arc<AppState>>) -> Result<Vec<ChatSession>, String> {
+    info!(search_query = %query, "Searching chat sessions");
+    let searcher = state.searcher.lock().map_err(|e| format!("Failed to lock searcher: {}", e))?;
+    let results = searcher.search(&query)?;
+
+    let sessions_map = state.sessions.lock().map_err(|e| format!("Failed to lock sessions: {}", e))?;
+    let mut found_sessions = Vec::new();
+
+    for result in results {
+        if let Some(session) = sessions_map.get(&result.session_id) {
+            found_sessions.push(session.clone());
+        }
+    }
+    Ok(found_sessions)
+}
+
+#[tauri::command]
 async fn finalize_and_new_chat(state: State<'_, Arc<AppState>>) -> Result<ChatSession, String> {
     let mut sessions = state.sessions.lock().map_err(|e| format!("Failed to lock sessions: {}", e))?;
     let mut current_id_guard = state.current_session_id.lock().map_err(|e| format!("Failed to lock current_session_id: {}", e))?;
@@ -734,11 +776,17 @@ async fn finalize_and_new_chat(state: State<'_, Arc<AppState>>) -> Result<ChatSe
         if is_empty {
             sessions.remove(&old_id);
             delete_session_file(&old_id).map_err(|e| format!("Failed to delete session file: {}", e))?;
+            
+            // Remove from search index
+            remove_session_from_index(&state, &old_id)?;
         } else {
             if let Some(session) = sessions.get_mut(&old_id) {
                 session.title = generate_session_title(&session.messages);
                 session.updated_at = now_ts();
                 save_session_to_file(session).map_err(|e| format!("Failed to save session: {}", e))?;
+                
+                // Update the search index
+                update_session_index(&state, session)?;
             }
         }
     }
@@ -750,6 +798,7 @@ async fn finalize_and_new_chat(state: State<'_, Arc<AppState>>) -> Result<ChatSe
 
     // No need to save the new session to file yet, it's empty.
     // It will be saved when a message is added.
+    // Also no need to index an empty session.
 
     Ok(new_session)
 }
@@ -770,11 +819,17 @@ async fn select_session(
 
             if is_empty {
                 sessions.remove(&old_id);
+                
+                // Remove from search index
+                remove_session_from_index(&state, &old_id)?;
             } else {
                 if let Some(old_session) = sessions.get_mut(&old_id) {
                     old_session.title = generate_session_title(&old_session.messages);
                     old_session.updated_at = now_ts();
                     save_session_to_file(old_session).map_err(|e| format!("Failed to save session: {}", e))?;
+                    
+                    // Update the search index
+                    update_session_index(&state, old_session)?;
                 }
             }
         }
@@ -859,6 +914,13 @@ fn main() {
     setup_logging();
     let config = load_or_initialize_config();
     let sessions = load_sessions_from_files();
+    let searcher = search::Searcher::new().expect("Failed to create searcher");
+
+    // Rebuild index on startup
+    let sessions_vec: Vec<ChatSession> = sessions.values().cloned().collect();
+    if let Err(e) = searcher.rebuild_index(sessions_vec) {
+        error!("Failed to rebuild index on startup: {}", e);
+    }
 
     let app_state = Arc::new(AppState {
         config: Mutex::new(config),
@@ -867,6 +929,7 @@ fn main() {
         tool_states: Mutex::new(HashMap::new()),
         mcp_tools: Mutex::new(HashMap::new()),
         mcp_clients: Mutex::new(HashMap::new()),
+        searcher: Mutex::new(searcher),
     });
 
     tauri::Builder::default()
@@ -882,6 +945,7 @@ fn main() {
             run_agent_task,
             // Session
             get_all_sessions,
+            search_chat_sessions,
             finalize_and_new_chat,
             select_session,
             open_config_file,
