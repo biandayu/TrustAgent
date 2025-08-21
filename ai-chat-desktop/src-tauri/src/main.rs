@@ -300,6 +300,9 @@ async fn _start_mcp_server_logic(
         }
     };
     
+    // --- FIX: Apply the constructed PATH to the command ---
+    cmd.env("PATH", &full_path_env);
+    
     // --- Ubuntu 特定修复：确保 npx 命令可以找到 ---
     #[cfg(target_os = "linux")]
     {
